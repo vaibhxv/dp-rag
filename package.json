@@ -1,0 +1,15 @@
+{
+  "name": "rag-proj",
+  "private": true,
+  "packageManager": "pnpm@10.11.0",
+  "scripts": {
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down",
+    "infra:pull-model": "docker compose exec ollama ollama pull llama3.2",
+    "dev:api": "pnpm --filter api start:dev",
+    "dev:ui": "pnpm --filter ui dev",
+    "dev": "pnpm -r --parallel --filter api --filter ui run dev",
+    "build": "pnpm -r build",
+    "test": "pnpm --filter api test"
+  }
+}
