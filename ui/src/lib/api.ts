@@ -10,6 +10,7 @@ export interface DocumentDto {
   sizeBytes: number
   sha256: string
   pageCount: number
+  ocrPageCount: number
   chunkCount: number
   status: DocumentStatus
   error: string
@@ -37,6 +38,8 @@ export interface Passage {
   page: number
   chunkIndex: number
   text: string
+  /** Text came from OCR of a scanned page. */
+  ocr: boolean
   score: number | null
 }
 

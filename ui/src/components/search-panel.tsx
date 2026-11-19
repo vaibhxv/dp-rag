@@ -45,7 +45,7 @@ export function SearchPanel({ documents }: { documents: DocumentDto[] }) {
   const [query, setQuery] = useState("")
   const [mode, setMode] = useState<SearchMode>("hybrid")
   const [alpha, setAlpha] = useState(0.5)
-  const [limit, setLimit] = useState(6)
+  const [limit, setLimit] = useState(4)
   const [documentId, setDocumentId] = useState<string>(ALL_DOCS)
   const [generate, setGenerate] = useState(true)
   const [loading, setLoading] = useState(false)
@@ -248,6 +248,11 @@ export function SearchPanel({ documents }: { documents: DocumentDto[] }) {
                     <FileText className="size-4 text-muted-foreground" />
                     <span className="truncate">{p.filename}</span>
                     <Badge variant="secondary">p. {p.page}</Badge>
+                    {p.ocr && (
+                      <Badge variant="outline" title="Text extracted by OCR from a scanned page">
+                        OCR
+                      </Badge>
+                    )}
                     {p.score !== null && (
                       <span className="ml-auto text-xs font-normal tabular-nums text-muted-foreground">
                         score {p.score.toFixed(3)}
@@ -279,12 +284,16 @@ function ResultsSkeleton({ withAnswer }: { withAnswer: boolean }) {
   )
 }
 
+const STOPWORDS = new Set(
+  "the and for are was were what who whom which with from that this into under has have had will shall been being does did how why when where its their there about than then them they your you our not any all can may per".split(" "),
+)
+
 /** Bold the query's terms inside a passage (purely visual aid). */
 function Highlight({ text, query }: { text: string; query: string }) {
   const terms = query
     .split(/\s+/)
     .map((t) => t.replace(/[^\p{L}\p{N}]/gu, ""))
-    .filter((t) => t.length > 2)
+    .filter((t) => t.length > 2 && !STOPWORDS.has(t.toLowerCase()))
   if (!terms.length) return <>{text}</>
   const re = new RegExp(`(${terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`, "giu")
   const lower = new Set(terms.map((t) => t.toLowerCase()))

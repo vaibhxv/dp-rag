@@ -4,6 +4,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import type { ChunkProps } from '../weaviate/weaviate.service.js';
+import { generativeParameters } from 'weaviate-client';
 import { WeaviateService } from '../weaviate/weaviate.service.js';
 import type { AskDto, SearchDto } from './search.dto.js';
 
@@ -14,6 +15,7 @@ export interface Passage {
   page: number;
   chunkIndex: number;
   text: string;
+  ocr: boolean;
   /** Hybrid/BM25 score (higher is better) or 1 - cosine distance for semantic. */
   score: number | null;
 }
@@ -35,6 +37,7 @@ const RETURN_PROPS: (keyof ChunkProps)[] = [
   'filename',
   'page',
   'chunkIndex',
+  'ocr',
 ];
 
 /**
@@ -44,12 +47,14 @@ const RETURN_PROPS: (keyof ChunkProps)[] = [
  */
 function groundedPrompt(question: string): string {
   return [
-    'You are a retrieval assistant. Answer the question using ONLY the passages provided.',
-    'Cite sources inline as (filename, p. N) after each claim.',
-    'If the passages do not contain the answer, reply exactly: "The uploaded documents do not contain enough information to answer this."',
-    'Do not use outside knowledge. Answer in the language of the question.',
+    // Kept short and direct: small local models (1-2B) follow this far better
+    // than a long rule list, which they tend to over-apply.
+    'Answer the question using ONLY the document passages above.',
+    'Reply in 1-3 sentences in the language of the question. Quote exact figures, names, designations and section numbers from the passages, then cite the source as (filename, p. N).',
+    'Do not use outside knowledge. Only if none of the passages relate to the question, say: "The uploaded documents do not cover this."',
     '',
     `Question: ${question}`,
+    'Answer:',
   ].join('\n');
 }
 
@@ -85,7 +90,7 @@ export class RetrievalService {
     return {
       query: dto.query,
       mode: dto.mode,
-      passages: res.objects.map((o) => toPassage(o)),
+      passages: res.objects.map((o) => toPassage(o, dto.mode)),
       tookMs: Date.now() - started,
     };
   }
@@ -104,6 +109,9 @@ export class RetrievalService {
     const generate = {
       groupedTask: groundedPrompt(dto.query),
       groupedProperties: ['text', 'filename', 'page'] as (keyof ChunkProps)[],
+      // Deterministic output: same question + same passages -> same answer.
+      // Also reduces small-model drift away from the source text.
+      config: generativeParameters.ollama({ temperature: 0 }),
     };
     const common = {
       limit: dto.limit,
@@ -126,7 +134,7 @@ export class RetrievalService {
                 fusionType: 'RelativeScore',
               });
 
-      const passages = res.objects.map((o) => toPassage(o));
+      const passages = res.objects.map((o) => toPassage(o, dto.mode));
       return {
         query: dto.query,
         mode: dto.mode,
@@ -141,17 +149,20 @@ export class RetrievalService {
       const message = (err as Error).message;
       this.logger.error(`Generation failed: ${message}`);
       throw new ServiceUnavailableException(
-        `Answer generation failed (is the Ollama model pulled? run "pnpm infra:pull-model"). ${message}`,
+        `Answer generation failed (is Ollama running and the model pulled?). ${message}`,
       );
     }
   }
 }
 
-function toPassage(o: {
-  uuid: string;
-  properties: Partial<ChunkProps>;
-  metadata?: { score?: number; distance?: number };
-}): Passage {
+function toPassage(
+  o: {
+    uuid: string;
+    properties: Partial<ChunkProps>;
+    metadata?: { score?: number; distance?: number };
+  },
+  mode: SearchDto['mode'],
+): Passage {
   const { score, distance } = o.metadata ?? {};
   return {
     id: o.uuid,
@@ -160,11 +171,14 @@ function toPassage(o: {
     page: o.properties.page ?? 1,
     chunkIndex: o.properties.chunkIndex ?? 0,
     text: o.properties.text ?? '',
+    ocr: o.properties.ocr ?? false,
+    // Vector-only queries report score=0 and carry relevance in `distance`
+    // (cosine distance), so convert that to a similarity instead.
     score:
-      score !== undefined
-        ? score
-        : distance !== undefined
+      mode === 'semantic'
+        ? distance !== undefined
           ? 1 - distance
-          : null,
+          : null
+        : (score ?? null),
   };
 }

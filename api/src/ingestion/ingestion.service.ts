@@ -18,6 +18,7 @@ export interface DocumentDto {
   sizeBytes: number;
   sha256: string;
   pageCount: number;
+  ocrPageCount: number;
   chunkCount: number;
   status: string;
   error: string;
@@ -66,9 +67,12 @@ export class IngestionService {
     }
 
     const chunks = chunkPages(parsed.pages);
+    const ocrPages = new Set(
+      parsed.pages.filter((p) => p.ocr).map((p) => p.page),
+    );
     if (chunks.length === 0) {
       throw new BadRequestException(
-        `No extractable text found in "${filename}" (scanned PDFs need OCR, which is not in the MVP).`,
+        `No extractable text found in "${filename}" (OCR also found no readable text).`,
       );
     }
 
@@ -78,6 +82,7 @@ export class IngestionService {
       sizeBytes: file.size,
       sha256,
       pageCount: parsed.pages.length,
+      ocrPageCount: parsed.pages.filter((p) => p.ocr).length,
       chunkCount: 0,
       status: 'processing',
       error: '',
@@ -93,6 +98,7 @@ export class IngestionService {
           filename,
           page: c.page,
           chunkIndex: c.chunkIndex,
+          ocr: ocrPages.has(c.page),
         }));
         const res = await chunkCollection.data.insertMany(batch);
         if (res.hasErrors) {
@@ -156,6 +162,7 @@ function toDto(id: string, p: Partial<DocumentProps>): DocumentDto {
     sizeBytes: p.sizeBytes ?? 0,
     sha256: p.sha256 ?? '',
     pageCount: p.pageCount ?? 0,
+    ocrPageCount: p.ocrPageCount ?? 0,
     chunkCount: p.chunkCount ?? 0,
     status: p.status ?? '',
     error: p.error ?? '',

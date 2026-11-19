@@ -1,8 +1,14 @@
-# Self-hosted RAG stack: Weaviate + local embedding model + local LLM.
+# Self-hosted RAG stack in Docker: Weaviate + Ollama (embeddings + LLM).
 # Nothing leaves the machine: no external AI APIs are called.
 #
-#   pnpm infra:up      # start everything (first run downloads ~3 GB of images/models)
-#   pnpm infra:down    # stop (data persists in named volumes)
+# Low on RAM/disk or no Docker? Use the native setup instead (see README):
+#   pnpm infra:native   (Weaviate binary)  +  brew install ollama
+#
+# With this compose file, set OLLAMA_ENDPOINT=http://ollama:11434 in api/.env
+# (the endpoint is called by Weaviate, from inside the docker network).
+#
+#   docker compose up -d
+#   docker compose logs -f ollama-pull   # wait for the model downloads (~1.5 GB)
 
 services:
   weaviate:
@@ -16,27 +22,19 @@ services:
     restart: on-failure:0
     environment:
       QUERY_DEFAULTS_LIMIT: 25
-      # MVP only: no auth on a localhost-bound instance. Enable API-key/OIDC before any shared deployment.
+      # MVP only: no auth. Enable API-key/OIDC before any shared deployment.
       AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
       PERSISTENCE_DATA_PATH: /var/lib/weaviate
       CLUSTER_HOSTNAME: node1
       DEFAULT_VECTORIZER_MODULE: none
-      ENABLE_MODULES: text2vec-transformers,generative-ollama
-      TRANSFORMERS_INFERENCE_API: http://t2v-transformers:8080
+      ENABLE_MODULES: text2vec-ollama,generative-ollama
+      # Local LLMs on CPU can exceed the 50s default.
+      MODULES_CLIENT_TIMEOUT: 180s
       DISABLE_TELEMETRY: "true"
     depends_on:
-      - t2v-transformers
       - ollama
 
-  # Embedding model served for Weaviate's text2vec-transformers module.
-  # Multilingual (50+ languages incl. Hindi + English), 384-dim, CPU friendly.
-  # Higher quality / heavier alternative: ...:intfloat-multilingual-e5-large-1.13.3
-  t2v-transformers:
-    image: cr.weaviate.io/semitechnologies/transformers-inference:sentence-transformers-paraphrase-multilingual-MiniLM-L12-v2-1.13.3
-    environment:
-      ENABLE_CUDA: "0"
-
-  # Local LLM for generative-ollama (the "G" in RAG).
+  # Serves both models: embeddings (text2vec-ollama) and the LLM (generative-ollama).
   ollama:
     image: ollama/ollama:0.40.16
     ports:
@@ -44,14 +42,19 @@ services:
     volumes:
       - ollama_data:/root/.ollama
 
-  # One-shot: pulls the LLM into the ollama volume, then exits.
+  # One-shot: pulls the models into the ollama volume, then exits.
+  #   paraphrase-multilingual  562 MB  multilingual embeddings (Hindi + English)
+  #   qwen2.5:1.5b             986 MB  smallest model that answered our test questions correctly
   ollama-pull:
     image: ollama/ollama:0.40.16
     depends_on:
       - ollama
     environment:
       OLLAMA_HOST: ollama:11434
-    entrypoint: ["/bin/sh", "-c", "sleep 3 && ollama pull ${OLLAMA_MODEL:-llama3.2}"]
+    entrypoint:
+      - /bin/sh
+      - -c
+      - sleep 3 && ollama pull ${OLLAMA_EMBED_MODEL:-paraphrase-multilingual} && ollama pull ${OLLAMA_MODEL:-qwen2.5:1.5b}
     restart: "no"
 
 volumes:

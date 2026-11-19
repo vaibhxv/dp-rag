@@ -55,7 +55,7 @@ export function IngestPanel({ documents, loading, onChanged }: Props) {
       for (const r of results) {
         if (r.ok && r.document.status === "ready") {
           toast.success(`${r.document.filename} ingested`, {
-            description: `${r.document.chunkCount} chunks from ${r.document.pageCount} page(s)`,
+            description: `${r.document.chunkCount} chunks from ${r.document.pageCount} page(s)${r.document.ocrPageCount ? ` · ${r.document.ocrPageCount} OCR'd` : ""}`,
           })
         } else if (r.ok) {
           toast.error(`${r.document.filename} failed`, { description: r.document.error })
@@ -91,8 +91,8 @@ export function IngestPanel({ documents, loading, onChanged }: Props) {
         <CardHeader>
           <CardTitle>Upload documents</CardTitle>
           <CardDescription>
-            PDF, DOCX, TXT or Markdown. Files are parsed, chunked page-by-page and
-            vectorized by Weaviate on insert.
+            PDF (incl. scanned, via Hindi + English OCR), DOCX, TXT or Markdown. Files are
+            parsed, chunked page-by-page and vectorized by Weaviate on insert.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4">
@@ -162,7 +162,12 @@ export function IngestPanel({ documents, loading, onChanged }: Props) {
             </ul>
           )}
 
-          <div className="flex justify-end">
+          <div className="flex items-center justify-end gap-3">
+            {uploading && (
+              <span className="text-sm text-muted-foreground" data-testid="ingest-progress">
+                Extracting text (OCR for scanned pages) → chunking → vectorizing in Weaviate…
+              </span>
+            )}
             <Button onClick={upload} disabled={!queued.length || uploading}>
               {uploading ? <Loader2 className="animate-spin" /> : <UploadCloud />}
               {uploading
@@ -221,7 +226,14 @@ export function IngestPanel({ documents, loading, onChanged }: Props) {
                       {d.status}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">{d.pageCount}</TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {d.pageCount}
+                    {d.ocrPageCount > 0 && (
+                      <Badge variant="outline" className="ml-2">
+                        {d.ocrPageCount === d.pageCount ? "OCR" : `${d.ocrPageCount} OCR`}
+                      </Badge>
+                    )}
+                  </TableCell>
                   <TableCell className="text-right tabular-nums">{d.chunkCount}</TableCell>
                   <TableCell className="text-right tabular-nums">
                     {formatBytes(d.sizeBytes)}

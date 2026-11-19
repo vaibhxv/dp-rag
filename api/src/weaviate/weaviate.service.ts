@@ -16,6 +16,8 @@ export type DocumentProps = {
   sizeBytes: number;
   sha256: string;
   pageCount: number;
+  /** Pages whose text came from OCR (scanned pages). */
+  ocrPageCount: number;
   chunkCount: number;
   status: 'processing' | 'ready' | 'failed';
   error: string;
@@ -28,6 +30,8 @@ export type ChunkProps = {
   filename: string;
   page: number;
   chunkIndex: number;
+  /** Passage text came from OCR; shown as an extraction-quality hint. */
+  ocr: boolean;
 };
 
 /**
@@ -35,8 +39,9 @@ export type ChunkProps = {
  *
  * - `Document` holds per-file metadata only (no vectorizer).
  * - `DocumentChunk` holds the searchable passages. Weaviate vectorizes `text`
- *   itself through the self-hosted `text2vec-transformers` module, keeps a BM25
- *   index for keyword/hybrid search, and runs RAG through `generative-ollama`.
+ *   itself through `text2vec-ollama` (local multilingual embedding model),
+ *   keeps a BM25 index for keyword/hybrid search, and runs RAG through
+ *   `generative-ollama` (local LLM).
  */
 @Injectable()
 export class WeaviateService implements OnModuleInit, OnModuleDestroy {
@@ -102,6 +107,7 @@ export class WeaviateService implements OnModuleInit, OnModuleDestroy {
           { name: 'sizeBytes', dataType: 'int' },
           { name: 'sha256', dataType: 'text', tokenization: 'field' },
           { name: 'pageCount', dataType: 'int' },
+          { name: 'ocrPageCount', dataType: 'int' },
           { name: 'chunkCount', dataType: 'int' },
           { name: 'status', dataType: 'text', tokenization: 'field' },
           { name: 'error', dataType: 'text' },
@@ -112,18 +118,25 @@ export class WeaviateService implements OnModuleInit, OnModuleDestroy {
     }
 
     if (!(await client.collections.exists(CHUNK_COLLECTION))) {
+      // Called by Weaviate (not this API), so it must be reachable from Weaviate.
+      const ollamaEndpoint = this.config.get<string>(
+        'OLLAMA_ENDPOINT',
+        'http://localhost:11434',
+      );
       await client.collections.create({
         name: CHUNK_COLLECTION,
-        vectorizers: configure.vectors.text2VecTransformers({
+        vectorizers: configure.vectors.text2VecOllama({
           // Only the passage body is embedded; metadata stays out of the vector.
           sourceProperties: ['text'],
+          apiEndpoint: ollamaEndpoint,
+          model: this.config.get(
+            'OLLAMA_EMBED_MODEL',
+            'paraphrase-multilingual',
+          ),
         }),
         generative: configure.generative.ollama({
-          apiEndpoint: this.config.get(
-            'OLLAMA_ENDPOINT',
-            'http://ollama:11434',
-          ),
-          model: this.config.get('OLLAMA_MODEL', 'llama3.2'),
+          apiEndpoint: ollamaEndpoint,
+          model: this.config.get('OLLAMA_MODEL', 'qwen2.5:1.5b'),
         }),
         properties: [
           { name: 'text', dataType: 'text' },
@@ -136,6 +149,7 @@ export class WeaviateService implements OnModuleInit, OnModuleDestroy {
           { name: 'filename', dataType: 'text', skipVectorization: true },
           { name: 'page', dataType: 'int' },
           { name: 'chunkIndex', dataType: 'int' },
+          { name: 'ocr', dataType: 'boolean' },
         ],
       });
       this.logger.log(`Created collection ${CHUNK_COLLECTION}`);
