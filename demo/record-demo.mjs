@@ -1,7 +1,7 @@
-// Records an end-to-end demo of the knowledge assistant:
-//   collapsible sidebar -> ingest (OCR) -> document panel (text + original PDF)
-//   -> ask this document -> library -> chat with citations -> follow-up
-//   -> out-of-scope question -> conversation history.
+// Records an end-to-end demo of Sahayak:
+//   collapsible sidebar -> ingest (OCR) -> document panel (text + original scan)
+//   -> ask this document -> library -> chat with citation seals + evidence
+//   -> follow-up -> out-of-scope question -> conversation history.
 //
 // Prereqs: Weaviate, Ollama, api (:4000) and ui (:3000, `pnpm build && pnpm start`)
 // running; the files passed here NOT yet ingested (duplicates are rejected);
@@ -10,10 +10,12 @@
 //   node demo/record-demo.mjs "docs/Sl. No. 07.pdf" "docs/Sl. No. 08.pdf"
 //
 // Output: demo/out/raw.webm + demo/out/marks.json, then run demo/make-video.sh.
-import { mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+// Narration: run `node demo/make-narration.mjs` first (Hinglish voice-over).
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
+import { LINES } from './narration.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const outDir = join(here, 'out');
@@ -21,8 +23,14 @@ const UI = process.env.UI_URL ?? 'http://localhost:3000';
 const files = process.argv.slice(2).map((f) => resolve(f));
 if (!files.length) throw new Error('Pass the files to ingest as arguments');
 
-rmSync(outDir, { recursive: true, force: true });
 mkdirSync(outDir, { recursive: true });
+for (const f of readdirSync(outDir)) if (f.endsWith('.webm') || f === 'marks.json') rmSync(join(outDir, f));
+
+// Narration clip lengths (from make-narration.mjs) pace the recording, so
+// every spoken line finishes before the next caption appears.
+const durationsFile = join(outDir, 'narration', 'durations.json');
+if (!existsSync(durationsFile)) throw new Error('Run `node demo/make-narration.mjs` first');
+const DURATIONS = JSON.parse(readFileSync(durationsFile, 'utf8'));
 
 const SIZE = { width: 1440, height: 900 };
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
@@ -72,6 +80,21 @@ const mark = (name) => {
 const pause = (ms) => page.waitForTimeout(ms);
 const caption = (t) => page.evaluate((x) => window.__caption?.(x), t);
 
+let speaking = null; // { t, dur, sped } of the current narration line
+/** Waits until the current narration line has finished (sped-up lines excepted). */
+async function narrationDone() {
+  if (!speaking || speaking.sped) return;
+  const left = speaking.t + speaking.dur + 0.35 - (Date.now() - t0) / 1000;
+  if (left > 0) await pause(left * 1000);
+}
+/** Shows a line's caption and starts its narration (marked for the audio mix). */
+async function narrate(id) {
+  await narrationDone();
+  await caption(LINES[id].caption);
+  mark(`say:${id}`);
+  speaking = { t: marks.at(-1).t, dur: DURATIONS[id], sped: Boolean(LINES[id].sped) };
+}
+
 async function moveTo(locator) {
   await locator.scrollIntoViewIfNeeded();
   const box = await locator.boundingBox();
@@ -87,6 +110,14 @@ async function type(locator, text) {
   await locator.pressSequentially(text, { delay: 32 });
   await pause(350);
 }
+/** Smooth mouse-wheel scroll over whatever is under the cursor. */
+async function wheel(dy) {
+  await page.mouse.move(900, 600, { steps: 10 });
+  for (let i = 0; i < 12; i++) {
+    await page.mouse.wheel(0, dy / 12);
+    await pause(40);
+  }
+}
 const answers = () => page.getByRole('button', { name: 'Copy answer' });
 async function ask(text) {
   const before = await answers().count();
@@ -98,106 +129,112 @@ async function ask(text) {
 
 // 1. Intro
 await page.goto(UI);
-await page.getByText(/documents · \d+ pages indexed/).waitFor({ timeout: 30_000 });
-await page.getByText('Try one of these').waitFor({ timeout: 10_000 });
-await caption('A chat-first knowledge assistant: local LLM + self-hosted Weaviate + scanned-PDF OCR. Nothing leaves the machine.');
+await page.getByText('Start with a question').waitFor({ timeout: 30_000 });
+await narrate('intro');
 mark('intro');
-await pause(4500);
+await pause(5000);
 
 // 2. Collapsible sidebar
-await caption('Collapsible sidebar: new chat, ingest, library and recent conversations');
+await narrate('sidebar');
 const trigger = page.locator('[data-sidebar=trigger]');
 await click(trigger);
-await pause(1600);
+await pause(1800);
 await click(trigger);
 await pause(1400);
 
 // 3. Ingest
-await click(page.getByRole('button', { name: 'Ingest documents' }).first());
-await page.getByText('Drop files here or click to browse').waitFor();
-await caption('Ingest: two scanned Delhi Gazette notifications (image-only PDFs, no text layer)');
-await moveTo(page.getByText('Drop files here or click to browse'));
+await click(page.getByRole('button', { name: 'Ingest', exact: true }).first());
+await page.getByText('Drop files here, or browse').waitFor();
+await narrate('ingestIntro');
+await moveTo(page.getByText('Drop files here, or browse'));
 await page.locator('input[type=file]').setInputFiles(files);
 await pause(2200);
-await click(page.getByRole('button', { name: /^Ingest \d+ files?$/ }));
+await narrationDone();
+await click(page.getByRole('button', { name: /^Add \d+ files?$/ }));
 mark('ingest-start');
-await caption('⏩ Sped up: runs in the background · OCR (English + Hindi) → LLM title & summary → chunks embedded into Weaviate');
-await page.getByRole('button', { name: 'Ready' }).nth(files.length - 1).waitFor({ timeout: 15 * 60_000 });
+await narrate('ingestSped');
+await page.getByRole('button', { name: 'Ready · open' }).nth(files.length - 1).waitFor({ timeout: 15 * 60_000 });
 mark('ingest-end');
-await caption('Both documents are ready: the original PDFs are kept in the local SQLite file store');
-await pause(3000);
+await narrate('ingestReady');
+await pause(3500);
 
-// 4. Document panel: summary, extracted text, original PDF
-await click(page.getByRole('button', { name: 'Ready' }).first());
-await page.getByRole('tab', { name: 'Extracted text' }).waitFor();
-await caption('Every document gets an LLM-written title, summary and category, plus its OCR text page by page');
+// 4. Document panel: summary, extracted text, original scan
+await click(page.getByRole('button', { name: 'Ready · open' }).first());
+await page.getByRole('tab', { name: 'Text' }).waitFor();
+await narrate('docSummary');
 await pause(4500);
 await click(page.getByRole('tab', { name: /Original/ }));
-await caption('The original scanned PDF, rendered in the app from the local file store');
+await narrate('docScan');
 await pause(4500);
 
 // 5. Ask this document
 await click(page.getByRole('button', { name: 'Ask this document' }));
-await caption('“Ask this document” limits retrieval to one file');
+await narrate('askDoc');
 await pause(1500);
 await ask('Who will exercise the powers under sections 7 and 8 of UAPA in Delhi?');
-await caption('The answer streams from the local LLM, with a citation to the exact page');
-await pause(5000);
-await click(page.getByRole('button', { name: 'Search all documents' }));
-await pause(800);
+await narrate('askDocAnswer');
+await pause(5500);
 
 // 6. Library
-await click(page.getByRole('button', { name: /^Library/ }).first());
-await caption('Library: every ingested document, grouped by category, searchable and filterable');
-await pause(3000);
-await type(page.getByPlaceholder('Search titles, file names or summaries'), 'BNSS');
+await click(page.getByRole('button', { name: 'Library', exact: true }).first());
+await page.getByText(/documents, \d+ pages/).waitFor();
+await narrate('library');
+await pause(3500);
+await wheel(420);
+await pause(2000);
+await wheel(-420);
+await click(page.getByRole('button', { name: /^Guidelines & SOPs/ }).first());
+await narrate('collections');
+await pause(2800);
+await click(page.getByRole('button', { name: /^All ·/ }));
+await pause(600);
+await type(page.getByPlaceholder('Search titles, files, summaries'), 'BNSS');
 await pause(2500);
-await page.getByPlaceholder('Search titles, file names or summaries').fill('');
-await click(page.getByRole('button', { name: /^Scanned \(OCR\)/ }));
-await pause(2500);
-await click(page.getByRole('button', { name: /^All \d+/ }));
-await pause(1000);
 
 // 7. New chat with citations
 await click(page.getByRole('button', { name: 'New chat' }).first());
-await caption('Chat across all 25 documents. Suggested questions were generated from the documents at ingestion.');
+await narrate('newChat');
 await pause(3500);
 await ask('What is the charge for deploying a Head Constable?');
-await caption('Hover a citation to preview the passage…');
+await narrate('keyFigures');
+await pause(4000);
 const cite = page.getByRole('button', { name: /^Source 1:/ }).last();
+await narrate('hover');
 await moveTo(cite);
 await pause(3500);
-await caption('…click it to open the page with the passage highlighted');
+await narrate('clickPage');
 await cite.click();
 await page.locator('mark').first().waitFor({ timeout: 10_000 });
-await pause(4500);
+await pause(5000);
 await click(page.getByRole('tab', { name: /Original/ }));
-await caption('Jump straight to the cited page in the original scan');
+await narrate('original');
 await pause(4500);
 await click(page.getByRole('button', { name: 'Close panel' }));
 
 // 8. Follow-up
-await caption('Follow-up questions use the conversation for context');
+await narrate('followUp');
 await ask('And for a Constable?');
 await pause(3500);
 await click(page.getByRole('button', { name: 'Useful', exact: true }).last());
 await pause(1500);
 
 // 9. Another document + out of scope
-await caption('Answers come from whichever document holds the fact');
-await ask('When did the Bharatiya Nagarik Suraksha Sanhita come into force?');
+await narrate('anotherDoc');
+await ask('When will the Bharatiya Nyaya Sanhita come into force?');
 await pause(4500);
-await caption('Asked about something the documents do not contain, it says so instead of guessing');
+await narrate('notCovered');
 await ask('What is the punishment for theft under IPC?');
 await pause(5000);
 
 // 10. History
-await caption('Conversations are kept in the sidebar; pick one up where you left off');
+await narrate('history');
 await click(page.locator('[data-sidebar=menu-button]', { hasText: 'Who will exercise' }));
 await pause(4000);
-await caption('Ingestion ✓  Library ✓  Cited answers ✓  — running entirely on this laptop');
+await narrate('outro');
 await pause(3500);
 
+await narrationDone();
+await pause(800);
 mark('end');
 await context.close();
 await browser.close();

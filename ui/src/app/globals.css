@@ -6,15 +6,26 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-inter);
-  --color-ocr: var(--ocr);
-  --color-ocr-foreground: var(--ocr-foreground);
-  --color-ok: var(--ok);
-  --color-ok-foreground: var(--ok-foreground);
+  --font-sans: var(--font-inter), var(--font-devanagari);
+  --font-serif: var(--font-newsreader), Georgia, serif;
+  --color-ink-2: var(--ink-2);
+  --color-navy-ink: var(--navy-ink);
+  --color-gold: var(--gold);
+  --color-gold-soft: var(--gold-soft);
+  --color-gold-ink: var(--gold-ink);
+  --color-gold-line: var(--gold-line);
   --color-highlight: var(--highlight);
-  --color-cite: var(--cite);
+  --color-paper: var(--paper);
+  --color-paper-line: var(--paper-line);
+  --color-panel: var(--panel);
+  --color-crimson: var(--crimson);
+  --color-crimson-soft: var(--crimson-soft);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-ok-ink: var(--ok-ink);
+  --color-slate-dot: var(--slate-dot);
   --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
-  --font-heading: var(--font-sans);
+  --font-heading: var(--font-serif);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -54,46 +65,56 @@
 }
 
 :root {
-  /* Light-only palette (see design canvas): cool white surfaces, one blue accent. */
-  --background: #ffffff;
-  --foreground: #0f172a;
+  /* "Gazette Modern" — light only. Navy ink + marigold seal, from the emblem. */
+  --background: #f6f7fb;
+  --foreground: #0d1733;
   --card: #ffffff;
-  --card-foreground: #0f172a;
+  --card-foreground: #0d1733;
   --popover: #ffffff;
-  --popover-foreground: #0f172a;
-  --primary: #2457d6;
+  --popover-foreground: #0d1733;
+  --primary: #1c3a94;
   --primary-foreground: #ffffff;
-  --secondary: #f2f4f8;
-  --secondary-foreground: #0f172a;
-  --muted: #f2f4f8;
-  --muted-foreground: #5b6474;
-  --accent: #eaf0fe;
-  --accent-foreground: #1a43ae;
-  --destructive: #c2410c;
-  --border: #e3e7ee;
-  --input: #d5dbe5;
-  --ring: #9db5ef;
-  --chart-1: #2457d6;
-  --chart-2: #5b6474;
-  --chart-3: #92400e;
-  --chart-4: #166534;
-  --chart-5: #b42318;
-  --radius: 0.75rem;
-  --sidebar: #f2f4f8;
-  --sidebar-foreground: #0f172a;
-  --sidebar-primary: #2457d6;
+  --secondary: #f6f7fb;
+  --secondary-foreground: #0d1733;
+  --muted: #f0f2f7;
+  --muted-foreground: #586380;
+  --accent: #eaf0ff;
+  --accent-foreground: #132a6e;
+  --destructive: #b42a21;
+  --border: #e3e7f0;
+  --input: #d9dfea;
+  --ring: #9db0e6;
+  --chart-1: #1c3a94;
+  --chart-2: #e9a21c;
+  --chart-3: #b42a21;
+  --chart-4: #1f8a4c;
+  --chart-5: #8b95ad;
+  --radius: 0.875rem;
+  --sidebar: #f6f7fb;
+  --sidebar-foreground: #0d1733;
+  --sidebar-primary: #1c3a94;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #e6ebf5;
-  --sidebar-accent-foreground: #0f172a;
-  --sidebar-border: #e3e7ee;
-  --sidebar-ring: #9db5ef;
-  /* App-specific tokens */
-  --ocr: #fef3c7;
-  --ocr-foreground: #92400e;
-  --ok: #dcfce7;
-  --ok-foreground: #166534;
-  --highlight: #fdf0c4;
-  --cite: #eaf0fe;
+  --sidebar-accent: #eaf0ff;
+  --sidebar-accent-foreground: #132a6e;
+  --sidebar-border: #e3e7f0;
+  --sidebar-ring: #9db0e6;
+  /* App tokens */
+  --ink-2: #34405e;
+  --navy-ink: #0d1733;
+  --gold: #e9a21c;
+  --gold-soft: #fff4db;
+  --gold-ink: #7a4e00;
+  --gold-line: #f1ddae;
+  --highlight: #ffe3a3;
+  --paper: #fffdf6;
+  --paper-line: #efe6cf;
+  --panel: #fbfaf6;
+  --crimson: #b42a21;
+  --crimson-soft: #fdecea;
+  --ok: #1f8a4c;
+  --ok-soft: #ddf3e5;
+  --ok-ink: #15663a;
+  --slate-dot: #8b95ad;
 }
 
 @layer base {
@@ -105,5 +126,20 @@
   }
   html {
     @apply font-sans;
+  }
+}
+@layer components {
+  /* Citation seal: navy disc with a marigold ring. */
+  .seal {
+    @apply inline-flex size-[22px] shrink-0 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground;
+    box-shadow: 0 0 0 2px var(--seal-gap, #fff), 0 0 0 3.5px var(--gold);
+  }
+  /* Highlighter-pen underline for key figures in answers. */
+  .marker {
+    background: linear-gradient(transparent 58%, var(--highlight) 58%);
+    @apply px-0.5 font-semibold;
+  }
+  .eyebrow {
+    @apply text-[11px] font-semibold tracking-[0.08em] uppercase text-muted-foreground;
   }
 }

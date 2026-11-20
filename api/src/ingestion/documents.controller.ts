@@ -13,7 +13,10 @@ import {
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
-import { IngestionService } from './ingestion.service.js';
+import {
+  DuplicateDocumentError,
+  IngestionService,
+} from './ingestion.service.js';
 
 const MAX_FILES = 50;
 const MAX_UPLOAD_BYTES = Number(process.env.MAX_UPLOAD_MB ?? 25) * 1024 * 1024;
@@ -46,6 +49,14 @@ export class DocumentsController {
             ok: false,
             filename: Buffer.from(file.originalname, 'latin1').toString('utf8'),
             error: (err as Error).message,
+            duplicateOf:
+              err instanceof DuplicateDocumentError
+                ? {
+                    id: err.existing.id,
+                    title: err.existing.title,
+                    filename: err.existing.filename,
+                  }
+                : undefined,
           };
         }
       }),
@@ -80,6 +91,22 @@ export class DocumentsController {
     );
     res.setHeader('Cache-Control', 'private, max-age=3600');
     res.end(data);
+  }
+
+  /** Page-1 thumbnail (PNG) for library cards; 404 for non-PDF files. */
+  @Get(':id/thumbnail')
+  async thumbnail(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Res() res: Response,
+  ) {
+    const png = await this.ingestion.thumbnail(id);
+    if (!png) {
+      res.status(404).end();
+      return;
+    }
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'private, max-age=86400');
+    res.end(png);
   }
 
   /** Regenerates title, summary, category and suggested questions. */

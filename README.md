@@ -2,9 +2,9 @@
 
 A chat-first assistant over official documents (orders, circulars, gazette notifications), including **scanned** PDFs. Ask a question in the chat and get a short answer, a citation chip for each fact, and one click to the exact page, shown as extracted text with the passage highlighted or as the original scan.
 
-**Demo video:** [`demo/rag-demo.mp4`](demo/rag-demo.mp4) (2½ min). It is a real recording of the app. Only the ingestion wait is sped up, and the caption says so.
+**Demo video:** [`demo/rag-demo.mp4`](demo/rag-demo.mp4) (3¼ min, with a Hinglish voice-over). It is a real recording of the app. Only the ingestion wait is sped up, and the caption says so.
 
-**Design:** the UI follows a light-only design canvas covering chat with sources and the document panel, the welcome state with a collapsed sidebar, the library and the ingest dialog. The reference video of the existing tool set the direction. This build keeps its chat → cited answer → side panel → library flow and improves on it (see below).
+**Design — "Gazette Modern"** (light only): porcelain-white surfaces, Delhi Police navy for ink and actions, marigold-gold for highlights and citation seals (all taken from the emblem), a newspaper-style serif (Newsreader) for headings to echo the official gazettes, Inter for the interface and Noto Sans Devanagari for Hindi. The design canvas (chat, welcome, library, ingest, phone) is a private Artifact: https://claude.ai/artifact/QxyZnhre7yWVkgqvpnn3Sb.
 
 ```
 rag-proj/
@@ -22,12 +22,12 @@ rag-proj/
 
 | Area | Feature |
 |---|---|
-| **Sidebar** (collapsible to an icon rail, with a hover rail and keyboard toggle) | New chat · **Ingest documents** (with a badge for files still processing) · Library (with count) · Recent conversations (stored in this browser) · live service status |
-| **Chat** | Streaming answers from a local LLM. Each fact carries a citation chip `[1]`: hover previews the passage, click opens the page. Shows a "Searching / writing" status, Jump to latest, stop, regenerate, copy, Useful / Not useful, and timing plus model. Follow-up questions use the conversation for context. |
+| **Sidebar** (collapsible to an icon rail; a drawer on phones) | Emblem + name · New chat · **Ingest** · Ask · Library · **Collections** (one click filters the library by category) · conversations grouped Today / Earlier · a live **ingestion card** (progress ring, current file and step) · service status |
+| **Chat** | Streaming answers from a local LLM. Each fact gets a **citation seal**: hover previews the passage, click opens the page. Key figures (amounts, dates) are underlined like a highlighter pen. Under each answer is an **evidence slip** quoting the exact line from the page that supports it (picked by matching the answer's figures and words). Also: "Searching / Writing from 3 passages" status, suggested follow-ups from the cited document, Jump to latest, stop, regenerate, copy, Useful / Not useful, a scope picker (all documents or one), and conversation context for follow-up questions. |
 | **Grounding** | Answers come only from retrieved passages. A **relevance gate** skips the LLM when nothing relevant was found and replies "The uploaded documents do not cover this." The closest passages are still shown, labelled as not relevant enough. |
-| **Ingest dialog** | Drag & drop several PDF/DOCX/TXT/MD files. Upload returns immediately and ingestion runs **in the background**, with live per-file progress ("OCR page 3 of 12" → "Summarising" → "Embedding") while you keep chatting. Duplicates (same SHA-256) are rejected. |
-| **Library panel** | Every document grouped by category, with search over titles, file names and summaries. Filters: category, Scanned (OCR), Ingesting. OCR / Digital badges. |
-| **Document panel** | LLM-written title, summary and category. Pages, size and OCR confidence. **Extracted text** page by page, scrolled to the cited page with the passage highlighted. **Original PDF** rendered in the app with pdf.js, opened at the cited page. **Ask this document** limits chat retrieval to that file. Also: open, download, delete. Expand to full width or close. |
+| **Add to the library** | Drag & drop several PDF/DOCX/TXT/MD files. Upload returns immediately and ingestion runs **in the background**. Each file shows a four-stage bar (Store → Read/OCR → Understand → Index) with the live step ("OCR page 3 of 12"). Duplicates (same SHA-256) show "Already in the library as …" with a link to the existing document. |
+| **Library** | A full view with cards showing **real page thumbnails** (rendered from page 1, cached in SQLite), a colour band per category, OCR / Digital and New badges, the AI summary, and live progress for files being ingested. Search over titles, files and summaries. Filters: category and Scanned. |
+| **Document panel** | Breadcrumb into the library, serif title, category, file, OCR confidence and the AI summary. **Text** shows each page set as paper, scrolled to the cited page with the passage lightly shaded and the answering line marked in amber. Page thumbnails sit at the bottom. **Original scan** is rendered in the app with pdf.js, opened at the cited page. **Ask this document** limits chat to that file. Also: open, download, delete, expand, close. Full screen on phones. |
 | **Suggestions** | "Try one of these" questions are generated from each document at ingestion, so they change with the library. |
 
 ### Improvements over the reference tool
@@ -101,6 +101,7 @@ rag-proj/
 | `GET` | `/documents/:id` | One document |
 | `GET` | `/documents/:id/pages` | Extracted text per page (+ OCR flag and confidence) |
 | `GET` | `/documents/:id/file` | The original file (inline) |
+| `GET` | `/documents/:id/thumbnail` | Page-1 PNG for library cards (rendered on first request, cached in SQLite) |
 | `POST` | `/documents/:id/describe` | Regenerate title / summary / category / questions |
 | `DELETE` | `/documents/:id` | Delete a document, its file, its pages and its chunks |
 | `POST` | `/chat` | Streaming RAG chat. Body: AI SDK `{ messages }`, plus optional `documentId`, `mode`. Streams `data-sources`, text deltas and `data-meta`. |
@@ -154,17 +155,21 @@ pnpm build    # type-checks and builds api + ui
 With everything running (UI as a production build: `pnpm --filter ui build && pnpm --filter ui start`) and every document ingested **except** the two passed to the script:
 
 ```bash
+node demo/make-narration.mjs  # Hinglish voice-over clips (macOS `say`, voice "Lekha", offline)
 node demo/record-demo.mjs "docs/Sl. No. 07.pdf" "docs/Sl. No. 08.pdf"
-./demo/make-video.sh          # → demo/rag-demo.mp4 (needs ffmpeg)
+./demo/make-video.sh          # → demo/rag-demo.mp4 with narration (needs ffmpeg)
 ```
+
+The narration script lives in `demo/narration.mjs`: each step has an English on-screen caption and a Hinglish line written in Devanagari, with English terms spelled as spoken (लाइब्रेरी, डॉक्यूमेंट) so the Hindi voice pronounces them naturally. The recording waits for each line to finish before moving on, and `mix-narration.mjs` places every clip at its caption's time in the final cut (accounting for the trimmed start and the 6× sped-up ingestion).
 
 ---
 
 ## Known limitations / next steps
 
 1. **The 1.5B model still makes mistakes on look-alike lines.** Asked for the *Sub-Inspector* rate, it answered with the *Assistant Sub-Inspector* line next to it (Rs. 4783 instead of 5739). Asked who sends the forensic expert, it named the Lieutenant Governor (who signed the notification) instead of the officer in charge of the police station. The citation chip makes these checkable in one click. A 7B-class model on a server is the real fix; on this laptop the 3B model did not help overall.
-2. **Hindi answer generation is weak.** Hindi *retrieval* works (the right Hindi page ranks first), but the 1.5B model's Hindi answers are unreliable, which is why the demo uses English questions.
-3. **Near-domain questions** can pass the relevance gate (see the numbers above). The prompt then has to refuse, and a 1.5B model sometimes doesn't.
-4. **Generated suggestions and titles** come from a small model. Some are vague and are filtered out in the UI, and they can be regenerated per document.
-5. Conversation history and feedback live in the browser only. Next would be server-side storage and an evaluation set built from the 👍/👎 feedback.
-6. Auth/RBAC, Weaviate auth and backups before any shared deployment. Postgres + object storage instead of SQLite for multiple users.
+2. **Similar names can get mixed up.** Asked when the Bharatiya *Nagarik Suraksha* Sanhita came into force, it answered from the Bharatiya *Nyaya* Sanhita notification. Both date from 1 July 2024, but the citation was the wrong law. The evidence slip shows the quoted line, so this is visible. The demo asks about the Nyaya Sanhita, which that page does answer.
+3. **Hindi answer generation is weak.** Hindi *retrieval* works (the right Hindi page ranks first), but the 1.5B model's Hindi answers are unreliable, which is why the demo uses English questions.
+4. **Near-domain questions** can pass the relevance gate (see the numbers above). The prompt then has to refuse, and a 1.5B model sometimes doesn't.
+5. **Generated suggestions and titles** come from a small model. Some are vague and are filtered out in the UI, and they can be regenerated per document.
+6. Conversation history and feedback live in the browser only. Next would be server-side storage and an evaluation set built from the 👍/👎 feedback.
+7. Auth/RBAC, Weaviate auth and backups before any shared deployment. Postgres + object storage instead of SQLite for multiple users.

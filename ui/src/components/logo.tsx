@@ -1,24 +1,17 @@
 import Image from "next/image"
 import { cn } from "cn"
 
-/** Organisation emblem (ui/public/logo.png) on a white tile. */
+/** Delhi Police emblem (ui/public/logo.png, transparent background). */
 export function Logo({ size = 32, className }: { size?: number; className?: string }) {
   return (
-    <span
-      className={cn(
-        "inline-flex shrink-0 items-center justify-center overflow-hidden rounded-[22%] bg-white ring-1 ring-border",
-        className
-      )}
+    <Image
+      src="/logo.png"
+      alt="Delhi Police emblem"
+      width={size}
+      height={size}
+      className={cn("shrink-0 object-contain", className)}
       style={{ width: size, height: size }}
-    >
-      <Image
-        src="/logo.png"
-        alt="Delhi Police emblem"
-        width={size}
-        height={size}
-        className="size-[92%] object-contain"
-        priority
-      />
-    </span>
+      priority
+    />
   )
 }

@@ -64,7 +64,13 @@ export type ChatMessage = UIMessage<never, ChatData>
 
 export type UploadResult =
   | { ok: true; document: DocumentDto }
-  | { ok: false; filename: string; error: string }
+  | {
+      ok: false
+      filename: string
+      error: string
+      /** Set when the same file is already in the library. */
+      duplicateOf?: { id: string; title: string; filename: string }
+    }
 
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -99,6 +105,8 @@ export const api = {
     if (!res.ok) throw new Error(`Delete failed (${res.status})`)
   },
 }
+
+export const thumbnailUrl = (id: string) => `${API_URL}/documents/${id}/thumbnail`
 
 export const fileUrl = (id: string, page?: number) =>
   `${API_URL}/documents/${id}/file${page ? `#page=${page}` : ""}`

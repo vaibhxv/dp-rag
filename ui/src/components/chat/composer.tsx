@@ -1,9 +1,19 @@
 "use client"
 
 import * as React from "react"
-import { ArrowUpIcon, FileTextIcon, SquareIcon, XIcon } from "lucide-react"
+import { ArrowUpIcon, BookOpenIcon, ChevronDownIcon, FileTextIcon, PaperclipIcon, SquareIcon } from "lucide-react"
 import { useShell } from "@/components/app-shell"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { displayTitle } from "@/lib/api"
+import { useLibrary } from "@/lib/store"
 import { cn } from "cn"
 
 export function Composer({
@@ -11,13 +21,17 @@ export function Composer({
   onStop,
   busy,
   large = false,
+  placeholder = "Ask about any order, circular or notification",
 }: {
   onSend: (text: string) => void
   onStop?: () => void
   busy: boolean
   large?: boolean
+  placeholder?: string
 }) {
-  const { scope, setScope } = useShell()
+  const { scope, setScope, openIngest } = useShell()
+  const { documents } = useLibrary()
+  const ready = documents.filter((d) => d.status === "ready")
   const [text, setText] = React.useState("")
   const ref = React.useRef<HTMLTextAreaElement>(null)
 
@@ -35,75 +49,102 @@ export function Composer({
   }
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-2.5">
       <form
         onSubmit={(e) => {
           e.preventDefault()
           submit()
         }}
         className={cn(
-          "flex flex-col gap-1 rounded-2xl border border-input bg-background px-2 py-2 shadow-[0_2px_10px_rgba(15,23,42,0.05)] transition-shadow focus-within:border-ring focus-within:shadow-[0_6px_24px_rgba(36,87,214,0.10)]",
-          large && "rounded-[18px] px-2.5 py-2.5"
+          "flex flex-col gap-2.5 rounded-[22px] border border-input bg-card py-3 pr-3 pl-[18px] shadow-[0_10px_30px_rgba(13,23,51,0.07)] transition-shadow focus-within:border-ring focus-within:shadow-[0_14px_40px_rgba(28,58,148,0.12)]",
+          large && "rounded-[26px] pt-4 pl-[22px]"
         )}
       >
-        {scope && (
-          <div className="flex px-2 pt-0.5">
-            <span className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-accent py-0.5 pr-1 pl-2.5 text-xs font-medium text-accent-foreground">
-              <FileTextIcon className="size-3.5 shrink-0" />
-              <span className="truncate">Only searching: {scope.title}</span>
-              <button
-                type="button"
-                aria-label="Search all documents"
-                className="rounded-full p-0.5 hover:bg-primary/10"
-                onClick={() => setScope(null)}
-              >
-                <XIcon className="size-3.5" />
-              </button>
-            </span>
-          </div>
-        )}
-        <div className="flex items-end gap-2">
-          <label htmlFor="composer" className="sr-only">
-            Ask a question
-          </label>
-          <textarea
-            id="composer"
-            ref={ref}
-            rows={1}
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-                e.preventDefault()
-                submit()
+        <label htmlFor="composer" className="sr-only">
+          Ask a question
+        </label>
+        <textarea
+          id="composer"
+          ref={ref}
+          rows={1}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault()
+              submit()
+            }
+          }}
+          placeholder={placeholder}
+          className={cn(
+            "min-h-7 resize-none bg-transparent text-base outline-none placeholder:text-muted-foreground",
+            large && "min-h-8 text-lg"
+          )}
+        />
+        <div className="flex items-center gap-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <button
+                  type="button"
+                  className="inline-flex h-8 max-w-[60%] items-center gap-1.5 rounded-full border bg-secondary px-3 text-xs font-medium text-ink-2 hover:border-primary/30"
+                />
               }
-            }}
-            placeholder="Ask about any order, circular or notification"
-            className={cn(
-              "min-h-9 flex-1 resize-none bg-transparent px-2 py-1.5 text-[15px] outline-none placeholder:text-muted-foreground",
-              large && "min-h-10 text-base"
-            )}
-          />
+            >
+              {scope ? <FileTextIcon className="size-3.5 shrink-0" /> : <BookOpenIcon className="size-3.5 shrink-0" />}
+              <span className="truncate">{scope ? scope.title : `All ${ready.length} documents`}</span>
+              <ChevronDownIcon className="size-3.5 shrink-0" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="max-h-80 w-80">
+              <DropdownMenuItem onClick={() => setScope(null)}>
+                <BookOpenIcon />
+                All {ready.length} documents
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Only one document</DropdownMenuLabel>
+              {ready.map((d) => (
+                <DropdownMenuItem key={d.id} onClick={() => setScope({ id: d.id, title: displayTitle(d) })}>
+                  <FileTextIcon />
+                  <span className="truncate">{displayTitle(d)}</span>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon-sm"
+            aria-label="Add documents"
+            onClick={openIngest}
+            className="size-8 rounded-full"
+          >
+            <PaperclipIcon />
+          </Button>
+          <span className="ml-auto hidden text-xs text-muted-foreground sm:inline">Enter to send</span>
           {busy && onStop ? (
-            <Button type="button" size="icon" variant="secondary" aria-label="Stop" onClick={onStop} className="size-9 rounded-[10px]">
+            <Button type="button" variant="secondary" aria-label="Stop" onClick={onStop} className="size-10 rounded-[14px] border">
               <SquareIcon className="fill-current" />
             </Button>
           ) : (
             <Button
               type="submit"
-              size="icon"
               aria-label="Send"
               disabled={!text.trim() || busy}
-              className={cn("size-9 rounded-[10px]", large && "size-10 rounded-xl")}
+              className={cn(
+                "size-10 rounded-[14px] shadow-[0_6px_16px_rgba(28,58,148,0.3)] disabled:shadow-none",
+                large && "size-11 rounded-[15px]"
+              )}
             >
-              <ArrowUpIcon />
+              <ArrowUpIcon className="size-[18px]" />
             </Button>
           )}
         </div>
       </form>
-      <p className="text-center text-xs text-muted-foreground">
-        Answers come only from your ingested documents. Check the cited page before acting on it.
-      </p>
+      {!large && (
+        <p className="text-center text-xs text-muted-foreground">
+          Answers come only from ingested documents. Check the cited page before acting on it.
+        </p>
+      )}
     </div>
   )
 }

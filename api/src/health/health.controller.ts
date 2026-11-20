@@ -16,7 +16,7 @@ export class HealthController {
     const [weaviateReady, ollamaReady] = await Promise.all([
       this.weaviate.isReady(),
       fetch(`${this.ollama.endpoint}/api/version`, {
-        signal: AbortSignal.timeout(2000),
+        signal: AbortSignal.timeout(5000),
       })
         .then((r) => r.ok)
         .catch(() => false),

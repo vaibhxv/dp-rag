@@ -92,6 +92,10 @@ export class StoreService implements OnModuleDestroy {
         document_id TEXT PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
         data BLOB NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS thumbnails (
+        document_id TEXT PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
+        png BLOB NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS pages (
         document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
         page INTEGER NOT NULL,
@@ -222,6 +226,21 @@ export class StoreService implements OnModuleDestroy {
       .prepare('SELECT data FROM files WHERE document_id = ?')
       .get(id) as { data: Uint8Array } | undefined;
     return row ? Buffer.from(row.data) : null;
+  }
+
+  getThumbnail(id: string): Buffer | null {
+    const row = this.db
+      .prepare('SELECT png FROM thumbnails WHERE document_id = ?')
+      .get(id) as { png: Uint8Array } | undefined;
+    return row ? Buffer.from(row.png) : null;
+  }
+
+  saveThumbnail(id: string, png: Buffer) {
+    this.db
+      .prepare(
+        'INSERT OR REPLACE INTO thumbnails (document_id, png) VALUES (?, ?)',
+      )
+      .run(id, png);
   }
 
   replacePages(id: string, pages: PageRecord[]) {

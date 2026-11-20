@@ -16,9 +16,23 @@ import {
 import { WeaviateService } from '../weaviate/weaviate.service.js';
 import { chunkPages } from './chunker.js';
 import { describeDocument } from './describe.js';
-import { parseDocument, SUPPORTED_EXTENSIONS } from './parser.js';
+import {
+  parseDocument,
+  renderThumbnail,
+  SUPPORTED_EXTENSIONS,
+} from './parser.js';
 
 const INSERT_BATCH_SIZE = 100;
+
+/** Upload rejected because the same file (same SHA-256) is already stored. */
+export class DuplicateDocumentError extends ConflictException {
+  constructor(
+    filename: string,
+    readonly existing: DocumentRecord,
+  ) {
+    super(`"${filename}" was already ingested as "${existing.filename}"`);
+  }
+}
 
 const MIME_TYPES: Record<string, string> = {
   '.pdf': 'application/pdf',
@@ -68,11 +82,7 @@ export class IngestionService implements OnApplicationBootstrap {
     }
     const sha256 = createHash('sha256').update(file.buffer).digest('hex');
     const duplicate = this.store.findBySha(sha256);
-    if (duplicate) {
-      throw new ConflictException(
-        `"${filename}" was already ingested as "${duplicate.filename}"`,
-      );
-    }
+    if (duplicate) throw new DuplicateDocumentError(filename, duplicate);
     const doc = this.store.insertDocument(
       {
         id: randomUUID(),
@@ -102,6 +112,19 @@ export class IngestionService implements OnApplicationBootstrap {
     const data = this.store.getFile(id);
     if (!data) throw new NotFoundException(`File for ${id} not found`);
     return { doc, data };
+  }
+
+  /** Page-1 thumbnail for PDFs, rendered on first request and cached in SQLite. */
+  async thumbnail(id: string): Promise<Buffer | null> {
+    const doc = this.get(id);
+    const cached = this.store.getThumbnail(id);
+    if (cached) return cached;
+    if (doc.mimeType !== 'application/pdf') return null;
+    const data = this.store.getFile(id);
+    if (!data) return null;
+    const png = await renderThumbnail(data);
+    if (png) this.store.saveThumbnail(id, png);
+    return png;
   }
 
   pages(id: string) {

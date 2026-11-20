@@ -114,3 +114,23 @@ async function parsePdf(
 function textPage(page: number, text: string): ParsedPage {
   return { page, text, ocr: false, ocrConfidence: null };
 }
+
+/** Renders page 1 of a PDF as a small PNG (library card thumbnail). */
+export async function renderThumbnail(
+  buffer: Buffer,
+  width = 320,
+): Promise<Buffer | null> {
+  const parser = new PDFParse({ data: new Uint8Array(buffer) });
+  try {
+    const shot = await parser.getScreenshot({
+      partial: [1],
+      desiredWidth: width,
+      imageDataUrl: false,
+      imageBuffer: true,
+    });
+    const data = shot.pages[0]?.data;
+    return data ? Buffer.from(data) : null;
+  } finally {
+    await parser.destroy();
+  }
+}
