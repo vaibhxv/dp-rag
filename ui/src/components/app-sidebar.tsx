@@ -2,6 +2,7 @@
 
 import { BookOpenIcon, MessageSquareIcon, PlusIcon, Trash2Icon, UploadIcon } from "lucide-react"
 import { useShell } from "@/components/app-shell"
+import { Logo } from "@/components/logo"
 import {
   Sidebar,
   SidebarContent,
@@ -45,9 +46,7 @@ export function AppSidebar({
     <Sidebar collapsible="icon">
       <SidebarHeader className="gap-3 pt-3">
         <div className="flex items-center gap-2.5 px-1 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:px-0">
-          <div className="flex size-8 shrink-0 items-center justify-center rounded-[9px] bg-primary text-sm font-bold text-primary-foreground">
-            S
-          </div>
+          <Logo size={34} />
           <div className="min-w-0 flex-1 leading-tight group-data-[collapsible=icon]:hidden">
             <div className="text-[15px] font-semibold">Sahayak</div>
             <div className="text-xs text-muted-foreground">Knowledge assistant</div>

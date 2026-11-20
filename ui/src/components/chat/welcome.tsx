@@ -3,6 +3,7 @@
 import { ArrowRightIcon, UploadIcon } from "lucide-react"
 import { useShell } from "@/components/app-shell"
 import { Composer } from "@/components/chat/composer"
+import { Logo } from "@/components/logo"
 import { Button } from "@/components/ui/button"
 import { displayTitle } from "@/lib/api"
 import { useLibrary } from "@/lib/store"
@@ -24,6 +25,7 @@ export function Welcome({ onAsk, busy }: { onAsk: (q: string) => void; busy: boo
   return (
     <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col justify-center gap-7 px-6 py-12">
       <div className="flex flex-col items-center gap-3 text-center">
+        <Logo size={72} className="mb-1 ring-0" />
         {loaded && (
           <button
             onClick={openLibrary}

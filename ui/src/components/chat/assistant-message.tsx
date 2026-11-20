@@ -11,6 +11,7 @@ import {
 } from "lucide-react"
 import { useShell } from "@/components/app-shell"
 import { textOf } from "@/components/chat/chat-view"
+import { Logo } from "@/components/logo"
 import { Button } from "@/components/ui/button"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -52,9 +53,7 @@ export function AssistantMessage({
 
   return (
     <div className="flex gap-3">
-      <div className="flex size-[30px] shrink-0 items-center justify-center rounded-lg bg-accent text-[13px] font-bold text-primary">
-        S
-      </div>
+      <Logo size={30} />
       <div className="flex min-w-0 flex-1 flex-col gap-3.5 pt-0.5">
         {pending || (!text && streaming) ? (
           <StepIndicator step={step ?? "retrieving"} found={passages.length} />
