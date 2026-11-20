@@ -12,6 +12,7 @@ export interface Passage {
   id: string;
   documentId: string;
   filename: string;
+  title: string;
   page: number;
   chunkIndex: number;
   text: string;
@@ -35,6 +36,7 @@ const RETURN_PROPS: (keyof ChunkProps)[] = [
   'text',
   'documentId',
   'filename',
+  'title',
   'page',
   'chunkIndex',
   'ocr',
@@ -168,6 +170,7 @@ function toPassage(
     id: o.uuid,
     documentId: o.properties.documentId ?? '',
     filename: o.properties.filename ?? '',
+    title: o.properties.title ?? '',
     page: o.properties.page ?? 1,
     chunkIndex: o.properties.chunkIndex ?? 0,
     text: o.properties.text ?? '',

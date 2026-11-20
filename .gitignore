@@ -7,3 +7,6 @@ dist
 .DS_Store
 .local
 .cache
+
+# SQLite store (original files + extracted text)
+api/data

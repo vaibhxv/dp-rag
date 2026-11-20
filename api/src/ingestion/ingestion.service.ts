@@ -1,148 +1,241 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { extname } from 'node:path';
 import {
   BadRequestException,
   ConflictException,
   Injectable,
   Logger,
   NotFoundException,
+  OnApplicationBootstrap,
 } from '@nestjs/common';
-import type { DocumentProps } from '../weaviate/weaviate.service.js';
+import { OllamaService } from '../ollama/ollama.service.js';
+import {
+  type DocumentRecord,
+  StoreService,
+} from '../store/store.service.js';
 import { WeaviateService } from '../weaviate/weaviate.service.js';
 import { chunkPages } from './chunker.js';
-import { parseDocument, UnsupportedFileError } from './parser.js';
-
-export interface DocumentDto {
-  id: string;
-  filename: string;
-  mimeType: string;
-  sizeBytes: number;
-  sha256: string;
-  pageCount: number;
-  ocrPageCount: number;
-  chunkCount: number;
-  status: string;
-  error: string;
-  uploadedAt: string;
-}
+import { describeDocument } from './describe.js';
+import { parseDocument, SUPPORTED_EXTENSIONS } from './parser.js';
 
 const INSERT_BATCH_SIZE = 100;
 
+const MIME_TYPES: Record<string, string> = {
+  '.pdf': 'application/pdf',
+  '.docx':
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.txt': 'text/plain',
+  '.md': 'text/markdown',
+};
+
+/**
+ * Ingestion runs in the background:
+ *   upload -> SQLite (original file, status "queued") -> respond immediately
+ *   worker: parse/OCR -> describe (LLM) -> chunk -> Weaviate (vectorized on insert)
+ *
+ * One document at a time (OCR and the LLM are CPU heavy on a laptop).
+ * Queued work survives an API restart: it is picked up again on boot.
+ */
 @Injectable()
-export class IngestionService {
+export class IngestionService implements OnApplicationBootstrap {
   private readonly logger = new Logger(IngestionService.name);
+  private readonly queue: string[] = [];
+  private running = false;
 
-  constructor(private readonly weaviate: WeaviateService) {}
+  constructor(
+    private readonly store: StoreService,
+    private readonly weaviate: WeaviateService,
+    private readonly ollama: OllamaService,
+  ) {}
 
-  /**
-   * Upload -> validate -> extract -> chunk -> insert into Weaviate.
-   * Weaviate vectorizes each chunk on insert via text2vec-transformers.
-   * Runs synchronously for the MVP (no job queue).
-   */
-  async ingest(file: Express.Multer.File): Promise<DocumentDto> {
+  onApplicationBootstrap() {
+    const pending = this.store.listByStatus('processing', 'queued');
+    if (pending.length) {
+      this.logger.log(`Resuming ${pending.length} unfinished document(s)`);
+      for (const doc of pending) this.enqueue(doc.id);
+    }
+  }
+
+  /** Validates and stores the upload; processing continues in the background. */
+  accept(file: Express.Multer.File): DocumentRecord {
     // Multer decodes multipart filenames as latin1; restore UTF-8 (Hindi etc.).
     const filename = Buffer.from(file.originalname, 'latin1').toString('utf8');
+    const ext = extname(filename).toLowerCase();
+    if (!MIME_TYPES[ext]) {
+      throw new BadRequestException(
+        `Unsupported file type "${ext || 'unknown'}". Supported: ${SUPPORTED_EXTENSIONS.join(', ')}`,
+      );
+    }
     const sha256 = createHash('sha256').update(file.buffer).digest('hex');
-
-    const documents = this.weaviate.documents();
-    const duplicate = await documents.query.fetchObjects({
-      filters: documents.filter.byProperty('sha256').equal(sha256),
-      limit: 1,
-    });
-    if (duplicate.objects.length > 0) {
+    const duplicate = this.store.findBySha(sha256);
+    if (duplicate) {
       throw new ConflictException(
-        `"${filename}" was already ingested as "${duplicate.objects[0].properties.filename}"`,
+        `"${filename}" was already ingested as "${duplicate.filename}"`,
       );
     }
-
-    let parsed;
-    try {
-      parsed = await parseDocument(filename, file.buffer);
-    } catch (err) {
-      if (err instanceof UnsupportedFileError) {
-        throw new BadRequestException(err.message);
-      }
-      throw new BadRequestException(
-        `Could not read "${filename}": ${(err as Error).message}`,
-      );
-    }
-
-    const chunks = chunkPages(parsed.pages);
-    const ocrPages = new Set(
-      parsed.pages.filter((p) => p.ocr).map((p) => p.page),
+    const doc = this.store.insertDocument(
+      {
+        id: randomUUID(),
+        filename,
+        mimeType: MIME_TYPES[ext],
+        sizeBytes: file.size,
+        sha256,
+      },
+      file.buffer,
     );
-    if (chunks.length === 0) {
-      throw new BadRequestException(
-        `No extractable text found in "${filename}" (OCR also found no readable text).`,
-      );
-    }
+    this.enqueue(doc.id);
+    return doc;
+  }
 
-    const documentId = await documents.data.insert({
-      filename,
-      mimeType: parsed.mimeType,
-      sizeBytes: file.size,
-      sha256,
-      pageCount: parsed.pages.length,
-      ocrPageCount: parsed.pages.filter((p) => p.ocr).length,
-      chunkCount: 0,
-      status: 'processing',
-      error: '',
-      uploadedAt: new Date(),
+  list(): DocumentRecord[] {
+    return this.store.listDocuments();
+  }
+
+  get(id: string): DocumentRecord {
+    const doc = this.store.getDocument(id);
+    if (!doc) throw new NotFoundException(`Document ${id} not found`);
+    return doc;
+  }
+
+  file(id: string): { doc: DocumentRecord; data: Buffer } {
+    const doc = this.get(id);
+    const data = this.store.getFile(id);
+    if (!data) throw new NotFoundException(`File for ${id} not found`);
+    return { doc, data };
+  }
+
+  pages(id: string) {
+    this.get(id);
+    return this.store.getPages(id);
+  }
+
+  /** Re-runs the LLM title/summary/questions from the stored page text. */
+  async redescribe(id: string): Promise<DocumentRecord> {
+    const doc = this.get(id);
+    const pages = this.store.getPages(id);
+    const description = await describeDocument(
+      this.ollama,
+      doc.filename,
+      pages.map((p) => p.text).join('\n\n'),
+    );
+    this.store.updateDocument(id, description);
+    // Keep the title shown on search results in sync.
+    const chunks = this.weaviate.chunks();
+    const res = await chunks.query.fetchObjects({
+      filters: chunks.filter.byProperty('documentId').equal(id),
+      limit: 1000,
     });
+    for (const o of res.objects) {
+      await chunks.data.update({ id: o.uuid, properties: { title: description.title } });
+    }
+    return this.get(id);
+  }
+
+  async remove(id: string): Promise<void> {
+    this.get(id);
+    const i = this.queue.indexOf(id);
+    if (i >= 0) this.queue.splice(i, 1);
+    await this.deleteChunks(id);
+    this.store.deleteDocument(id);
+  }
+
+  private enqueue(id: string) {
+    if (!this.queue.includes(id)) this.queue.push(id);
+    void this.drain();
+  }
+
+  private async drain() {
+    if (this.running) return;
+    this.running = true;
+    try {
+      let id: string | undefined;
+      while ((id = this.queue.shift())) {
+        await this.process(id);
+      }
+    } finally {
+      this.running = false;
+    }
+  }
+
+  private async process(id: string) {
+    const doc = this.store.getDocument(id);
+    const data = this.store.getFile(id);
+    if (!doc || !data) return; // deleted while queued
+
+    const started = Date.now();
+    const setProgress = (progress: string) =>
+      this.store.updateDocument(id, { status: 'processing', progress });
 
     try {
-      const chunkCollection = this.weaviate.chunks();
+      setProgress('Reading text');
+      await this.deleteChunks(id); // idempotent when resuming after a restart
+      const parsed = await parseDocument(doc.filename, data, setProgress);
+      const ocrPages = parsed.pages.filter((p) => p.ocr);
+      const confidences = ocrPages
+        .map((p) => p.ocrConfidence)
+        .filter((c): c is number => c !== null);
+      this.store.replacePages(id, parsed.pages);
+      this.store.updateDocument(id, {
+        pageCount: parsed.pages.length,
+        ocrPageCount: ocrPages.length,
+        ocrConfidence: confidences.length
+          ? Math.round(confidences.reduce((a, b) => a + b, 0) / confidences.length)
+          : null,
+      });
+
+      const chunks = chunkPages(parsed.pages);
+      if (chunks.length === 0) {
+        throw new Error('No readable text found (OCR also found none).');
+      }
+
+      setProgress('Summarising with the local LLM');
+      const description = await describeDocument(
+        this.ollama,
+        doc.filename,
+        parsed.pages.map((p) => p.text).join('\n\n'),
+      );
+      this.store.updateDocument(id, description);
+
+      setProgress(`Embedding ${chunks.length} passages`);
+      const ocrSet = new Set(ocrPages.map((p) => p.page));
+      const collection = this.weaviate.chunks();
       for (let i = 0; i < chunks.length; i += INSERT_BATCH_SIZE) {
         const batch = chunks.slice(i, i + INSERT_BATCH_SIZE).map((c) => ({
           text: c.text,
-          documentId,
-          filename,
+          documentId: id,
+          filename: doc.filename,
+          title: description.title,
           page: c.page,
           chunkIndex: c.chunkIndex,
-          ocr: ocrPages.has(c.page),
+          ocr: ocrSet.has(c.page),
         }));
-        const res = await chunkCollection.data.insertMany(batch);
+        const res = await collection.data.insertMany(batch);
         if (res.hasErrors) {
           const first = Object.values(res.errors)[0];
           throw new Error(first?.message ?? 'unknown insert error');
         }
       }
 
-      await documents.data.update({
-        id: documentId,
-        properties: { status: 'ready', chunkCount: chunks.length },
+      this.store.updateDocument(id, {
+        status: 'ready',
+        progress: '',
+        error: '',
+        chunkCount: chunks.length,
+        processedAt: new Date().toISOString(),
       });
-      this.logger.log(`Ingested "${filename}" -> ${chunks.length} chunks`);
+      this.logger.log(
+        `Ingested "${doc.filename}": ${parsed.pages.length} pages (${ocrPages.length} OCR), ${chunks.length} chunks in ${((Date.now() - started) / 1000).toFixed(1)}s`,
+      );
     } catch (err) {
       const message = (err as Error).message;
-      this.logger.error(`Ingestion failed for "${filename}": ${message}`);
-      await this.deleteChunks(documentId);
-      await documents.data.update({
-        id: documentId,
-        properties: { status: 'failed', error: message },
+      this.logger.error(`Ingestion failed for "${doc.filename}": ${message}`);
+      await this.deleteChunks(id).catch(() => undefined);
+      this.store.updateDocument(id, {
+        status: 'failed',
+        progress: '',
+        error: message,
       });
     }
-
-    return this.get(documentId);
-  }
-
-  async list(): Promise<DocumentDto[]> {
-    const documents = this.weaviate.documents();
-    const res = await documents.query.fetchObjects({ limit: 1000 });
-    return res.objects
-      .map((o) => toDto(o.uuid, o.properties))
-      .sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt));
-  }
-
-  async get(id: string): Promise<DocumentDto> {
-    const obj = await this.weaviate.documents().query.fetchObjectById(id);
-    if (!obj) throw new NotFoundException(`Document ${id} not found`);
-    return toDto(obj.uuid, obj.properties);
-  }
-
-  async remove(id: string): Promise<void> {
-    await this.get(id);
-    await this.deleteChunks(id);
-    await this.weaviate.documents().data.deleteById(id);
   }
 
   private async deleteChunks(documentId: string) {
@@ -151,24 +244,4 @@ export class IngestionService {
       chunks.filter.byProperty('documentId').equal(documentId),
     );
   }
-}
-
-function toDto(id: string, p: Partial<DocumentProps>): DocumentDto {
-  const uploadedAt = p.uploadedAt as Date | string | undefined;
-  return {
-    id,
-    filename: p.filename ?? '',
-    mimeType: p.mimeType ?? '',
-    sizeBytes: p.sizeBytes ?? 0,
-    sha256: p.sha256 ?? '',
-    pageCount: p.pageCount ?? 0,
-    ocrPageCount: p.ocrPageCount ?? 0,
-    chunkCount: p.chunkCount ?? 0,
-    status: p.status ?? '',
-    error: p.error ?? '',
-    uploadedAt:
-      uploadedAt instanceof Date
-        ? uploadedAt.toISOString()
-        : (uploadedAt ?? ''),
-  };
 }

@@ -1,124 +1,130 @@
-# Knowledge Retrieval Platform: RAG MVP
+# Sahayak: knowledge assistant (RAG MVP)
 
-An MVP that shows the two core layers of the knowledge platform working end to end:
+A chat-first assistant over official documents (orders, circulars, gazette notifications), including **scanned** PDFs. Ask a question in the chat and get a short answer, a citation chip for each fact, and one click to the exact page, shown as extracted text with the passage highlighted or as the original scan.
 
-1. **Ingestion**: upload documents (including **scanned** PDFs). They are OCR'd where needed, chunked page by page, vectorized and stored in a vector DB.
-2. **Retrieval / RAG**: search them with hybrid, semantic or keyword retrieval, and get an optional answer from a local LLM that uses only the retrieved passages and cites them.
+**Demo video:** [`demo/rag-demo.mp4`](demo/rag-demo.mp4) (2½ min). It is a real recording of the app. Only the ingestion wait is sped up, and the caption says so.
 
-**Demo video:** [`demo/rag-demo.mp4`](demo/rag-demo.mp4) (2 min). It ingests the three scanned Delhi Gazette notifications (`Sl. No. 06/07/08.pdf`), then answers questions from each one. The video is a real screen recording; only the OCR wait is sped up, and the video says so.
+**Design:** the UI follows a light-only design canvas covering chat with sources and the document panel, the welcome state with a collapsed sidebar, the library and the ingest dialog. The reference video of the existing tool set the direction. This build keeps its chat → cited answer → side panel → library flow and improves on it (see below).
 
 ```
 rag-proj/
-├── api/                      NestJS backend (ingestion + retrieval layers)
-├── ui/                       Next.js frontend (shadcn/ui components)
+├── api/                        NestJS: ingestion queue, SQLite store, retrieval, streaming chat
+├── ui/                         Next.js 16 + shadcn/ui (Base UI) + Vercel AI SDK chat
+├── docs/                       The 25 sample documents
 ├── scripts/weaviate-native.sh  Runs Weaviate as a native binary (no Docker)
-├── docker-compose.yml        Alternative: Weaviate + Ollama in Docker
-├── demo/                     Demo recording script + rag-demo.mp4
-└── *.docx / *.pdf            Original proposal + sample documents
+├── docker-compose.yml          Alternative: Weaviate + Ollama in Docker
+└── demo/                       Recording script + make-video.sh + rag-demo.mp4
 ```
 
 ---
 
-## Decisions taken (and how they differ from the proposal)
+## What the app does
 
-The proposal document was an early draft. For this MVP we **replace** its stack choices as follows:
+| Area | Feature |
+|---|---|
+| **Sidebar** (collapsible to an icon rail, with a hover rail and keyboard toggle) | New chat · **Ingest documents** (with a badge for files still processing) · Library (with count) · Recent conversations (stored in this browser) · live service status |
+| **Chat** | Streaming answers from a local LLM. Each fact carries a citation chip `[1]`: hover previews the passage, click opens the page. Shows a "Searching / writing" status, Jump to latest, stop, regenerate, copy, Useful / Not useful, and timing plus model. Follow-up questions use the conversation for context. |
+| **Grounding** | Answers come only from retrieved passages. A **relevance gate** skips the LLM when nothing relevant was found and replies "The uploaded documents do not cover this." The closest passages are still shown, labelled as not relevant enough. |
+| **Ingest dialog** | Drag & drop several PDF/DOCX/TXT/MD files. Upload returns immediately and ingestion runs **in the background**, with live per-file progress ("OCR page 3 of 12" → "Summarising" → "Embedding") while you keep chatting. Duplicates (same SHA-256) are rejected. |
+| **Library panel** | Every document grouped by category, with search over titles, file names and summaries. Filters: category, Scanned (OCR), Ingesting. OCR / Digital badges. |
+| **Document panel** | LLM-written title, summary and category. Pages, size and OCR confidence. **Extracted text** page by page, scrolled to the cited page with the passage highlighted. **Original PDF** rendered in the app with pdf.js, opened at the cited page. **Ask this document** limits chat retrieval to that file. Also: open, download, delete. Expand to full width or close. |
+| **Suggestions** | "Try one of these" questions are generated from each document at ingestion, so they change with the library. |
+
+### Improvements over the reference tool
+
+- **Ingestion is in the product.** Upload, OCR scanned pages and index them, with progress you can watch. The reference only browses a fixed corpus.
+- **The original file is stored and viewable** from a local database (SQLite), with no external file server. pdf.js renders it, so it also works in browsers without a PDF plugin.
+- **Click-through citations**: a chip on each fact, a hover preview, and a highlighted passage at the right page in the text view.
+- **"Ask this document"** scoping, follow-up questions, and conversation history.
+- **Honest "not covered"**: a measured relevance gate instead of trusting the model.
+- **Light only**, as requested. One blue accent and soft status colours.
+
+---
+
+## Decisions (and how they differ from the original proposal)
 
 | Area | Proposal said | MVP decision | Why |
 |---|---|---|---|
-| Vector / search engine | OpenSearch (BM25 + vector) | **Self-hosted Weaviate 1.40** | One system covers storage, vectorization, BM25, hybrid fusion and RAG generation. That leaves fewer moving parts for an MVP. |
-| Embedding model | BGE-M3 / multilingual E5, run by our own service | **Weaviate `text2vec-ollama`** with `paraphrase-multilingual` (562 MB) | Weaviate vectorizes on insert and at query time, so we don't run our own embedding pipeline. The model is multilingual, and a Hindi query correctly retrieves Hindi passages. It's small enough for an 8 GB laptop. |
-| Answer generation | **None**: strictly non-generative, excerpts only | **RAG through Weaviate `generative-ollama`** with local `qwen2.5:1.5b`, temperature 0, **can be turned off per request** | The MVP has to show RAG working. The model runs locally (no external AI APIs). The prompt restricts it to the retrieved passages, and temperature 0 makes answers repeatable. Turn off "Generate answer" (or send `generate: false`) to get the excerpts-only behaviour the proposal described. |
-| OCR | Tesseract / PaddleOCR | **tesseract.js (WASM), `eng+hin`**, applied automatically to PDF pages with no text layer | No system install needed and ~25 MB of language data. English is listed first because we measured that it keeps Latin digits correct ("1978", not "978"). Pages are rendered at 3× for OCR. |
-| Backend | Python + FastAPI | **NestJS (TypeScript)** | One language across the monorepo. Uses the official `weaviate-client` v3 (gRPC). |
-| Frontend | React + TypeScript | **Next.js 16 + shadcn/ui (Base UI)** | Ready-made accessible components, so we could build the demo UI quickly. |
-| Metadata DB | PostgreSQL | **Not used**. Document metadata lives in a second Weaviate collection (`Document`) | Avoids running a second datastore for the MVP. Postgres comes back with users/RBAC/audit. |
-| Background jobs | Celery + Redis | **None**. Ingestion runs synchronously inside the upload request (~4–5 s per scanned page) | Good enough for demo-sized files. A queue (e.g. `@nestjs/bullmq`) is the first step to scaling. |
-| Original file storage | Object storage | **Not stored**. Only extracted text plus its SHA-256 | Out of MVP scope. |
-| Office parsing | Apache Tika | `pdf-parse` (PDF, per page) and `mammoth` (DOCX). TXT/MD read directly | Pure-Node, no JVM. |
-| Identity / RBAC | Keycloak | **None** (open demo) | Out of MVP scope. |
-| Runtime | Docker | **Native binaries by default** (Weaviate binary + Homebrew Ollama). Docker Compose is also provided | Docker Desktop alone uses several GB, which is too much for an 8 GB / low-disk machine. |
+| Vector / search engine | OpenSearch | **Self-hosted Weaviate 1.40** (native binary) | One system for vectors, BM25 and hybrid fusion. |
+| Embeddings | BGE-M3 / E5 via own service | **Weaviate `text2vec-ollama`** + `paraphrase-multilingual` (562 MB) | Weaviate vectorizes on insert and at query time. The model is multilingual: a Hindi query ranks the Hindi rate table first. |
+| Answer generation | None (excerpts only) | **Local `qwen2.5:1.5b` via Ollama, streamed**, temperature 0 | The chat needs token streaming, so `/chat` calls Ollama directly after Weaviate retrieval. `/ask` still uses Weaviate's `generative-ollama` for the non-streaming API. No external AI APIs. |
+| Chat UI | n/a | **Vercel AI SDK (`useChat`) + `use-stick-to-bottom`** on shadcn components | A proven chat state/streaming library. The API speaks its UI-message-stream protocol (SSE) directly, so there's no adapter. |
+| Metadata DB + file storage | PostgreSQL + object storage | **SQLite (`node:sqlite`, built into Node)**: documents, **original files (BLOB)**, extracted page text | Zero install and one file (`api/data/knowledge.db`). Weaviate keeps only the searchable chunks. Postgres + object storage are the path to multi-user. |
+| Background jobs | Celery + Redis | **In-process serial queue**, resumed on restart | OCR and the LLM are CPU-heavy on a laptop, so one document at a time. Unfinished documents are picked up again when the API boots. |
+| OCR | Tesseract / PaddleOCR | **tesseract.js (WASM), `eng+hin`**, only on pages without a text layer, rendered at 3× | No system install. English first keeps Latin digits right. Per-page confidence is stored and shown. |
+| Document titles / categories | Manual | **Generated at ingestion** by the local LLM (JSON schema output), from English lines of bilingual gazettes when available | Makes the library browsable without manual cataloguing. Can be regenerated with `POST /documents/:id/describe`. |
+| Backend / frontend | FastAPI / React | **NestJS / Next.js 16** | One language across the monorepo. |
+| Identity / RBAC | Keycloak | None (open demo) | Out of MVP scope. |
 
-### Things we kept from the proposal
+### Retrieval and grounding (measured on the 25 sample documents)
 
-- **Structure-aware chunking**: split on paragraphs, then sentences (including the Hindi danda `।`), and hard-split only as a last resort. Chunks are ~1000 chars with ~150 chars overlap. **Chunks never cross a page boundary**, so every passage has an exact page number.
-- **Hybrid retrieval** (BM25 + vector) is the default. Weaviate's `relativeScoreFusion` combines the two, and `alpha` (0 = keyword, 1 = vector) can be changed in the UI.
-- **Source traceability**: every passage returns its filename, page number, chunk index and an **OCR flag** (extraction-quality indicator). The document list shows how many pages were OCR'd.
-- **No-result behaviour**: if no passages are retrieved, the UI says so, and the LLM is told to say the documents don't cover the question.
-- **Integrity**: SHA-256 of each upload is stored and duplicate uploads are rejected.
-- **No external AI APIs**: OCR, embeddings and the LLM all run locally.
+- **Chunking**: paragraphs → sentences (including the Hindi `।`), ~1000 chars with 150 overlap. Chunks never cross pages, so every citation has an exact page.
+- **Hybrid search** (BM25 + vector, `relativeScoreFusion`, α = 0.5). The **top 3** passages go to the LLM; 3 measured better than 5 with a 1.5B model because fewer look-alike lines confuse it less.
+- **Relevance gate** (`MIN_RELEVANCE=0.5`, best-passage cosine similarity): in-scope questions scored 0.54–0.75, clearly off-topic ones 0.21–0.49 (e.g. "punishment for theft under IPC" 0.49, "capital of France" 0.21). Near-domain questions such as "punishment for murder" (0.54) still pass the gate.
 
-### Model sizing (measured on an 8 GB M-series Mac)
+### Model sizing (8 GB M-series Mac)
 
 | Role | Model | Disk | Notes |
 |---|---|---|---|
-| Embeddings | `paraphrase-multilingual` | 562 MB | Cross-lingual retrieval works: a Hindi query ranks the Hindi rate table #1. |
-| LLM | `qwen2.5:1.5b` | 986 MB | Correct, grounded answers to English questions in 2–8 s. |
-| LLM (rejected) | `qwen2.5:0.5b` | 397 MB | Fast, but gave wrong facts (wrong officer, mixed-up rates). |
-| OCR | tesseract.js `eng+hin` | ~25 MB | Confidence 84–93% on the gazette scans, ~4–5 s per page. |
-| Vector DB | Weaviate 1.40.5 binary | 390 MB | ~250 MB RAM at this data size. |
+| Embeddings | `paraphrase-multilingual` | 562 MB | Hindi ↔ English retrieval works. |
+| LLM | `qwen2.5:1.5b` | 986 MB | 2–6 s per answer, streamed. |
+| LLM (tried, removed) | `qwen2.5:3b` | 1.9 GB | Fixed one rate question but got another wrong, produced garbage in Hindi, was 3–5× slower, and pushed the machine into heavy swapping. |
+| LLM (tried, removed) | `qwen2.5:0.5b` | 397 MB | Wrong facts. |
+| OCR | tesseract.js `eng+hin` | ~25 MB | 84–93% confidence on the gazette scans, ~4–5 s per page. |
+| Vector DB | Weaviate 1.40.5 | 390 MB | ~250 MB RAM. |
 
 ---
 
 ## Architecture
 
 ```
-            ┌────────────┐  multipart upload   ┌──────────────────────────────────────────┐
-            │  ui (Next) │ ──────────────────► │ api (Nest) :4000                         │
-            │  :3000     │                     │  IngestionModule                         │
-            │            │  POST /ask          │   parse → OCR scanned pages → chunk → SHA│
-            │            │ ──────────────────► │  RetrievalModule                         │
-            └────────────┘                     │   hybrid / nearText / bm25 [+ generate]  │
-                                               └───────────────┬──────────────────────────┘
-                                                               │ gRPC + REST (weaviate-client v3)
-                                               ┌───────────────▼──────────────────────────┐
-                                               │ Weaviate :8080 / :50051                  │
-                                               │  Document       (metadata, no vectors)   │
-                                               │  DocumentChunk  (text → vector + BM25)   │
-                                               └───────┬───────────────────────┬──────────┘
-                                          text2vec-ollama              generative-ollama
-                                               ▼                               ▼
-                                   ┌───────────────── Ollama :11434 ─────────────────┐
-                                   │ paraphrase-multilingual        qwen2.5:1.5b     │
-                                   └─────────────────────────────────────────────────┘
+ ui (Next.js :3000)                         api (NestJS :4000)
+ ┌──────────────────────────┐   POST /chat (SSE, AI SDK protocol)   ┌──────────────────────────────────────────┐
+ │ Sidebar · Chat (useChat) │ ────────────────────────────────────► │ ChatService                               │
+ │ Library · Document panel │   /documents, /documents/:id/file     │  hybrid search ─► gate ─► Ollama stream   │
+ │ Ingest dialog · pdf.js   │ ────────────────────────────────────► │ IngestionService (background queue)       │
+ └──────────────────────────┘                                       │  parse/OCR ─► describe (LLM) ─► chunk     │
+                                                                    └──────┬──────────────┬────────────┬────────┘
+                                                        SQLite (node:sqlite)│   Weaviate   │   Ollama   │
+                                                  documents · files (BLOB)  │ DocumentChunk│ qwen2.5:1.5b
+                                                  · pages (extracted text)  │ text→vector  │ paraphrase-
+                                                                            │ + BM25       │ multilingual
 ```
 
-### Weaviate schema
-
-- **`Document`**: `filename, mimeType, sizeBytes, sha256, pageCount, ocrPageCount, chunkCount, status (processing|ready|failed), error, uploadedAt`. No vectorizer.
-- **`DocumentChunk`**: `text` (vectorized), `documentId`, `filename`, `page`, `chunkIndex`, `ocr`. Vectorizer: `text2vec-ollama` on `text` only. Generative: `generative-ollama`.
-
-The API creates both collections on startup if they don't exist.
-
-### API endpoints (`api`, default port 4000)
+### API endpoints
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/health` | API + Weaviate readiness |
-| `POST` | `/documents` | `multipart/form-data`, field `files` (up to 10 files, 25 MB each). Each file is processed separately, so one bad file doesn't fail the others. |
-| `GET` | `/documents` | List ingested documents |
+| `GET` | `/health` | Weaviate + Ollama status, model, library stats |
+| `POST` | `/documents` | `multipart/form-data`, field `files` (up to 50, 25 MB each). Stores and queues each file and returns immediately. |
+| `GET` | `/documents` | All documents with status / progress / title / summary / category / questions |
 | `GET` | `/documents/:id` | One document |
-| `DELETE` | `/documents/:id` | Delete a document and all its chunks |
-| `POST` | `/search` | Retrieval only. Body: `{ query, mode?: "hybrid"\|"semantic"\|"keyword", alpha?: 0..1, limit?: 1..50, documentId? }` |
-| `POST` | `/ask` | RAG. Same body plus `generate?: boolean` (default `true`). Returns `{ answer, passages[], tookMs }` |
+| `GET` | `/documents/:id/pages` | Extracted text per page (+ OCR flag and confidence) |
+| `GET` | `/documents/:id/file` | The original file (inline) |
+| `POST` | `/documents/:id/describe` | Regenerate title / summary / category / questions |
+| `DELETE` | `/documents/:id` | Delete a document, its file, its pages and its chunks |
+| `POST` | `/chat` | Streaming RAG chat. Body: AI SDK `{ messages }`, plus optional `documentId`, `mode`. Streams `data-sources`, text deltas and `data-meta`. |
+| `POST` | `/search` | Retrieval only: `{ query, mode?, alpha?, limit?, documentId? }` |
+| `POST` | `/ask` | Non-streaming RAG via Weaviate `generative-ollama` |
 
 ---
 
-## Running it locally (native, no Docker; recommended for 8 GB machines)
+## Running it locally (native, no Docker)
 
-**Prerequisites:** Node 22+, pnpm 10, Homebrew. About 2.5 GB of disk in total.
+**Prerequisites:** Node 22.5+ (for `node:sqlite`; tested on 26), pnpm 10, Homebrew. ~2.5 GB of disk.
 
 ```bash
 pnpm install
 
-# 1. Ollama + the two models (~1.5 GB)
+# 1. Ollama + models (~1.5 GB)
 brew install ollama
-ollama serve &                 # or: brew services start ollama
+ollama serve &
 pnpm infra:models              # paraphrase-multilingual + qwen2.5:1.5b
 
 # 2. Weaviate (downloads and checksum-verifies the binary into .local/ on first run)
-pnpm infra:native              # leave running; data persists in .local/weaviate-data
+pnpm infra:native              # leave running
 
-# 3. Configure (defaults work as-is for the native setup)
+# 3. Config (defaults work as-is)
 cp api/.env.example api/.env
 cp ui/.env.example  ui/.env.local
 
@@ -126,51 +132,39 @@ cp ui/.env.example  ui/.env.local
 pnpm dev
 ```
 
-Open http://localhost:3000, upload PDFs on the **Ingest** tab, then ask questions on the **Search** tab.
+Open http://localhost:3000 and click **Ingest documents** in the sidebar. Ingesting all of `docs/` (25 files, 187 pages, ~150 of them scanned) takes about 15 minutes on a laptop, and you can chat while it runs.
 
-To use **Docker** instead, run `docker compose up -d` and set `OLLAMA_ENDPOINT=http://ollama:11434` in `api/.env`.
+To use **Docker** instead, run `docker compose up -d` and set `OLLAMA_ENDPOINT=http://ollama:11434` in `api/.env` (Weaviate calls Ollama inside the Docker network). The API keeps using `OLLAMA_API_ENDPOINT=http://localhost:11434`.
 
 Notes:
-- `OLLAMA_ENDPOINT` is called **by Weaviate**, not by the API, so it must be reachable from wherever Weaviate runs.
-- `OLLAMA_ENDPOINT`, `OLLAMA_EMBED_MODEL` and `OLLAMA_MODEL` are written into the `DocumentChunk` collection config when it is first created. If you change them later, run `curl -X DELETE localhost:8080/v1/schema/DocumentChunk`, restart the API and re-ingest.
-- The native script raises Weaviate's disk thresholds (read-only at 98% instead of 90%) because dev laptops are often fuller than 90%. Keep the defaults on servers.
-
-### Quick API test
-
-```bash
-curl -F "files=@Sl. No. 06.pdf" http://localhost:4000/documents
-curl -s -X POST http://localhost:4000/ask -H 'Content-Type: application/json' \
-  -d '{"query":"What is the charge for deploying a Sub-Inspector of police?"}' | jq .answer
-# "The charge for deploying a Sub-Inspector of police is Rs. 5739/- per day for five hours."
-```
+- `OLLAMA_ENDPOINT` is the address **Weaviate** uses for embeddings. `OLLAMA_API_ENDPOINT` (defaults to `OLLAMA_ENDPOINT`) is the address the **API** uses for chat and descriptions. They differ only when Weaviate runs in Docker.
+- The `DocumentChunk` collection config (embedding model, endpoint) is fixed when it is created. To change it, delete the collection (`curl -X DELETE localhost:8080/v1/schema/DocumentChunk`) and re-ingest.
+- The native Weaviate script raises the disk read-only threshold to 98% because dev laptops are often more than 90% full.
+- Reset everything: stop the API, delete `api/data/` and the `DocumentChunk` collection.
 
 ### Tests
 
 ```bash
-pnpm test          # chunker unit tests (api)
-pnpm build         # type-checks and builds api + ui
+pnpm test     # chunker + document-description unit tests (api)
+pnpm build    # type-checks and builds api + ui
 ```
 
 ### Re-recording the demo
 
-With everything running and an empty knowledge base:
+With everything running (UI as a production build: `pnpm --filter ui build && pnpm --filter ui start`) and every document ingested **except** the two passed to the script:
 
 ```bash
-node demo/record-demo.mjs "Sl. No. 06.pdf" "Sl. No. 07.pdf" "Sl. No. 08.pdf"
-./demo/make-video.sh     # → demo/rag-demo.mp4 (needs ffmpeg)
+node demo/record-demo.mjs "docs/Sl. No. 07.pdf" "docs/Sl. No. 08.pdf"
+./demo/make-video.sh          # → demo/rag-demo.mp4 (needs ffmpeg)
 ```
-
-The script drives your installed Chrome via `playwright-core`, so no browser download is needed.
 
 ---
 
-## Known MVP limitations / next steps
+## Known limitations / next steps
 
-1. **Hindi answer generation is weak with the 1.5B model.** Hindi *retrieval* works well, but the generated answer may switch to English or mistranslate ranks. That's why the demo shows the Hindi query in retrieval-only mode. `qwen2.5:3b` (~1.9 GB) or larger should fix this if RAM allows.
-2. **Small-model leakage.** For questions the documents don't cover, a 1.5B model sometimes answers from general knowledge despite the prompt. The cited passages make this visible, and a larger model or a relevance threshold before generation would reduce it.
-3. **Async ingestion**: move parsing/OCR/insert into a BullMQ worker and poll `status` (the field already exists).
-4. **OCR quality**: per-page confidence is logged but not yet stored or shown. Low-confidence pages should be flagged for review.
-5. **Auth + RBAC**: per-collection/document access filters. Weaviate multi-tenancy or filter-based ACLs both fit.
-6. **Original-file storage** plus a document viewer that opens the cited page.
-7. **Evaluation harness**: labelled query set to tune `alpha`, chunk size and models (Recall@10 / nDCG@10, as in the proposal).
-8. **Weaviate auth** (API key / OIDC) and backups before any shared deployment. Anonymous access is enabled for local use only.
+1. **The 1.5B model still makes mistakes on look-alike lines.** Asked for the *Sub-Inspector* rate, it answered with the *Assistant Sub-Inspector* line next to it (Rs. 4783 instead of 5739). Asked who sends the forensic expert, it named the Lieutenant Governor (who signed the notification) instead of the officer in charge of the police station. The citation chip makes these checkable in one click. A 7B-class model on a server is the real fix; on this laptop the 3B model did not help overall.
+2. **Hindi answer generation is weak.** Hindi *retrieval* works (the right Hindi page ranks first), but the 1.5B model's Hindi answers are unreliable, which is why the demo uses English questions.
+3. **Near-domain questions** can pass the relevance gate (see the numbers above). The prompt then has to refuse, and a 1.5B model sometimes doesn't.
+4. **Generated suggestions and titles** come from a small model. Some are vague and are filtered out in the UI, and they can be regenerated per document.
+5. Conversation history and feedback live in the browser only. Next would be server-side storage and an evaluation set built from the 👍/👎 feedback.
+6. Auth/RBAC, Weaviate auth and backups before any shared deployment. Postgres + object storage instead of SQLite for multiple users.

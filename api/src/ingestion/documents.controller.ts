@@ -7,13 +7,15 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Res,
   UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import { IngestionService } from './ingestion.service.js';
 
-const MAX_FILES = 10;
+const MAX_FILES = 50;
 const MAX_UPLOAD_BYTES = Number(process.env.MAX_UPLOAD_MB ?? 25) * 1024 * 1024;
 
 @Controller('documents')
@@ -21,8 +23,9 @@ export class DocumentsController {
   constructor(private readonly ingestion: IngestionService) {}
 
   /**
-   * multipart/form-data with one or more `files` fields.
-   * Each file is processed independently so one bad file doesn't fail the rest.
+   * multipart/form-data with one or more `files` fields. Each file is stored
+   * and queued independently (status "queued"); poll GET /documents for
+   * progress. One bad file doesn't fail the rest.
    */
   @Post()
   @UseInterceptors(
@@ -30,24 +33,23 @@ export class DocumentsController {
       limits: { fileSize: MAX_UPLOAD_BYTES },
     }),
   )
-  async upload(@UploadedFiles() files: Express.Multer.File[] | undefined) {
+  upload(@UploadedFiles() files: Express.Multer.File[] | undefined) {
     if (!files?.length) {
       throw new BadRequestException('Attach at least one file as "files"');
     }
-
-    const results = [];
-    for (const file of files) {
-      try {
-        results.push({ ok: true, document: await this.ingestion.ingest(file) });
-      } catch (err) {
-        results.push({
-          ok: false,
-          filename: Buffer.from(file.originalname, 'latin1').toString('utf8'),
-          error: (err as Error).message,
-        });
-      }
-    }
-    return { results };
+    return {
+      results: files.map((file) => {
+        try {
+          return { ok: true, document: this.ingestion.accept(file) };
+        } catch (err) {
+          return {
+            ok: false,
+            filename: Buffer.from(file.originalname, 'latin1').toString('utf8'),
+            error: (err as Error).message,
+          };
+        }
+      }),
+    };
   }
 
   @Get()
@@ -58,6 +60,33 @@ export class DocumentsController {
   @Get(':id')
   get(@Param('id', ParseUUIDPipe) id: string) {
     return this.ingestion.get(id);
+  }
+
+  /** Extracted text per page (text layer or OCR). */
+  @Get(':id/pages')
+  pages(@Param('id', ParseUUIDPipe) id: string) {
+    return this.ingestion.pages(id);
+  }
+
+  /** The original uploaded file, served inline (PDFs open in the browser viewer). */
+  @Get(':id/file')
+  file(@Param('id', ParseUUIDPipe) id: string, @Res() res: Response) {
+    const { doc, data } = this.ingestion.file(id);
+    res.setHeader('Content-Type', doc.mimeType);
+    res.setHeader('Content-Length', data.length);
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename*=UTF-8''${encodeURIComponent(doc.filename)}`,
+    );
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.end(data);
+  }
+
+  /** Regenerates title, summary, category and suggested questions. */
+  @Post(':id/describe')
+  @HttpCode(200)
+  describe(@Param('id', ParseUUIDPipe) id: string) {
+    return this.ingestion.redescribe(id);
   }
 
   @Delete(':id')

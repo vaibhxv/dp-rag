@@ -35,15 +35,18 @@ export interface ParsedDocument {
  * PDF pages without a usable text layer (scans) are rendered to an image and
  * OCR'd (Hindi + English by default).
  */
+export type ProgressFn = (message: string) => void;
+
 export async function parseDocument(
   filename: string,
   buffer: Buffer,
+  onProgress: ProgressFn = () => {},
 ): Promise<ParsedDocument> {
   const ext = extname(filename).toLowerCase();
 
   switch (ext) {
     case '.pdf':
-      return { mimeType: 'application/pdf', pages: await parsePdf(buffer) };
+      return { mimeType: 'application/pdf', pages: await parsePdf(buffer, onProgress) };
     case '.docx': {
       const { value } = await mammoth.extractRawText({ buffer });
       return {
@@ -65,7 +68,10 @@ export async function parseDocument(
   }
 }
 
-async function parsePdf(buffer: Buffer): Promise<ParsedPage[]> {
+async function parsePdf(
+  buffer: Buffer,
+  onProgress: ProgressFn,
+): Promise<ParsedPage[]> {
   const parser = new PDFParse({ data: new Uint8Array(buffer) });
   try {
     const { pages } = await parser.getText();
@@ -77,8 +83,10 @@ async function parsePdf(buffer: Buffer): Promise<ParsedPage[]> {
     if (scanned.length === 0) return result;
 
     logger.log(`OCR needed for ${scanned.length}/${result.length} page(s)`);
+    onProgress('Starting OCR');
     await withOcr(async (ocr) => {
-      for (const page of scanned) {
+      for (const [i, page] of scanned.entries()) {
+        onProgress(`OCR page ${i + 1} of ${scanned.length}`);
         const shot = await parser.getScreenshot({
           partial: [page.page],
           scale: OCR_RENDER_SCALE,

@@ -5,5 +5,6 @@ import { RetrievalService } from './retrieval.service.js';
 @Module({
   controllers: [RetrievalController],
   providers: [RetrievalService],
+  exports: [RetrievalService],
 })
 export class RetrievalModule {}

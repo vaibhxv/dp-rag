@@ -4,8 +4,9 @@
 # Low on RAM/disk or no Docker? Use the native setup instead (see README):
 #   pnpm infra:native   (Weaviate binary)  +  brew install ollama
 #
-# With this compose file, set OLLAMA_ENDPOINT=http://ollama:11434 in api/.env
-# (the endpoint is called by Weaviate, from inside the docker network).
+# With this compose file, set in api/.env:
+#   OLLAMA_ENDPOINT=http://ollama:11434       (used by Weaviate, inside the docker network)
+#   OLLAMA_API_ENDPOINT=http://localhost:11434 (used by the API on the host for chat)
 #
 #   docker compose up -d
 #   docker compose logs -f ollama-pull   # wait for the model downloads (~1.5 GB)
