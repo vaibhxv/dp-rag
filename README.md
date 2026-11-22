@@ -143,19 +143,19 @@ To use **Docker** instead, run `docker compose up -d` and set `OLLAMA_ENDPOINT=h
 
 | Role | Model | Size |
 |---|---|---|
-| OCR | `qwen3-vl:8b` (vision model; tesseract.js stays as the per-page fallback) | 6.2 GB |
+| OCR | `qwen3-vl:8b-instruct` (vision model; tesseract.js stays as the per-page fallback) | 6.2 GB |
 | Embeddings | `qwen3-embedding:4b` | 2.5 GB |
 | Reranker | `BAAI/bge-reranker-v2-m3` via text-embeddings-inference (`reranker` service) | ~1.1 GB |
 | LLM | `gemma4:12b` | 8.0 GB |
 
 ```bash
 docker compose up -d                       # weaviate, ollama, reranker
-docker compose exec ollama ollama pull qwen3-vl:8b
+docker compose exec ollama ollama pull qwen3-vl:8b-instruct   # not the plain tag: that is the reasoning variant
 docker compose exec ollama ollama pull qwen3-embedding:4b
 docker compose exec ollama ollama pull gemma4:12b
 ```
 
-In `api/.env`: `OCR_ENGINE=ollama`, `OCR_MODEL=qwen3-vl:8b`, `OLLAMA_EMBED_MODEL=qwen3-embedding:4b`, `OLLAMA_MODEL=gemma4:12b`, `OLLAMA_NUM_CTX=8192`, `RERANKER_URL=http://localhost:8082`. After changing the embedding model, delete the `DocumentChunk` collection, restart the API and re-index the stored originals with `curl -X POST localhost:4000/documents/reprocess`.
+In `api/.env`: `OCR_ENGINE=ollama`, `OCR_MODEL=qwen3-vl:8b-instruct`, `OLLAMA_EMBED_MODEL=qwen3-embedding:4b`, `OLLAMA_MODEL=gemma4:12b`, `OLLAMA_NUM_CTX=8192`, `RERANKER_URL=http://localhost:8082`. After changing the embedding model, delete the `DocumentChunk` collection, restart the API and re-index the stored originals with `curl -X POST localhost:4000/documents/reprocess`.
 
 Measure before and after a change: `node demo/qa-eval.mjs` (26 questions with known answers, incl. Hindi, Hinglish and out-of-scope) and `cd api && node ../demo/ocr-bench.mjs ../docs` (OCR error rate against PDF text layers).
 

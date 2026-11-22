@@ -15,9 +15,11 @@ const RERANK_CANDIDATES = Number(process.env.RERANK_CANDIDATES ?? 20);
 /**
  * With a reranker, its top score (0-1) is the relevance gate instead of the
  * embedding similarity: a cross-encoder separates "answers the question" from
- * "same topic" far more sharply. Calibrated on the sample documents.
+ * "same topic" far more sharply. Calibrated with bge-reranker-v2-m3 on the 25
+ * sample documents: answerable questions scored 0.66-0.999, out-of-scope ones
+ * 0.0009-0.06 (e.g. "punishment for theft under IPC" 0.059).
  */
-const MIN_RERANK_SCORE = Number(process.env.MIN_RERANK_SCORE ?? 0.1);
+const MIN_RERANK_SCORE = Number(process.env.MIN_RERANK_SCORE ?? 0.2);
 /**
  * Below this cosine similarity (best passage vs the question) the question is
  * treated as not covered and the LLM is not called. Measured on the 25 sample
@@ -38,6 +40,24 @@ const SYSTEM_PROMPT = [
   '- Answer in 1-4 short sentences, in the same language as the question.',
   `- Do not use outside knowledge. If the passages do not answer the question, say exactly: "${NOT_COVERED}" and nothing else.`,
 ].join('\n');
+
+/** Common Hindi function words when typed in Latin letters (Hinglish). */
+const HINGLISH_WORDS = new Set(
+  'kya kaise kaisa kitne kitna kitni kab kahan kaun kis kisko kiski kiska kiske hai hain hota hoti hote karna karne karte karta chahiye liye mein me ka ki ke ko se par wala wali kar sakta sakte milta milti kaun-si konsa'.split(' '),
+);
+
+/**
+ * True for a question typed as Hindi in Latin letters, e.g. "e-FIR par sign
+ * kitne din mein karna hota hai?". Cross-encoders and embeddings handle
+ * English and Devanagari well but not romanised Hindi, so such questions
+ * are translated to English for retrieval (the answer keeps the user's language).
+ */
+export function isRomanHindi(q: string): boolean {
+  if (/[ऀ-ॿ]/.test(q)) return false;
+  const words = q.toLowerCase().match(/[a-z-]+/g) ?? [];
+  const hits = words.filter((w) => HINGLISH_WORDS.has(w)).length;
+  return hits >= 2 && hits / words.length >= 0.2;
+}
 
 function textOf(m: UIMessageLike): string {
   return (m.parts ?? [])
@@ -72,6 +92,29 @@ export class ChatService {
     private readonly ollama: OllamaService,
     private readonly reranker: RerankerService,
   ) {}
+
+  /** Translates a Hinglish question to English for retrieval; falls back to the original. */
+  private async toEnglish(question: string): Promise<string> {
+    try {
+      const english = await this.ollama.complete(
+        [
+          {
+            role: 'system',
+            content:
+              'Translate the user\'s question from Hinglish (Hindi written in Latin letters) into clear English. Keep legal terms, acronyms, numbers and section names as they are. Reply with only the English question.',
+          },
+          { role: 'user', content: question },
+        ],
+        { temperature: 0 },
+      );
+      const clean = english.trim().split('\n')[0];
+      this.logger.log(`Hinglish query rewritten: "${question}" -> "${clean}"`);
+      return clean || question;
+    } catch (err) {
+      this.logger.warn(`Query translation failed: ${(err as Error).message}`);
+      return question;
+    }
+  }
 
   /**
    * Finds the passages to answer from, plus a relevance score for the
@@ -164,7 +207,8 @@ export class ChatService {
         data: { step: 'retrieving' },
         transient: true,
       });
-      const { passages, mode, relevance, covered } = await this.findPassages(query, dto);
+      const searchQuery = isRomanHindi(query) ? await this.toEnglish(query) : query;
+      const { passages, mode, relevance, covered } = await this.findPassages(searchQuery, dto);
       send({
         type: 'data-sources',
         id: 'sources',

@@ -73,7 +73,8 @@ for (const [q, expect, file, forbid] of CASES) {
     answerable++;
     ok = expect.test(text) && !(forbid && forbid.test(text));
     const inSources = files.some((f) => f.includes(file));
-    const nums = [...text.matchAll(/\[(\d+)\]/g)].map((m) => Number(m[1]) - 1);
+    // Same citation syntax the UI renders: [1] or [1, 2].
+    const nums = [...text.matchAll(/\[(\d+(?:\s*,\s*\d+)*)\]/g)].flatMap((m) => m[1].split(',').map((n) => Number(n) - 1));
     const citedOk = nums.length > 0 && nums.every((n) => files[n]?.includes(file));
     if (ok) correct++;
     if (inSources) grounded++;
@@ -81,7 +82,8 @@ for (const [q, expect, file, forbid] of CASES) {
     src = inSources ? 'src✓' : 'src✗';
     cit = citedOk ? 'cite✓' : 'cite✗';
   }
-  rows.push(`${ok ? 'PASS' : 'FAIL'} ${src} ${cit} ${(ms / 1000).toFixed(1)}s | ${q}\n      → ${text.replace(/\s+/g, ' ').slice(0, 220)}`);
+  const rel = sources?.relevance != null ? ` rel=${Number(sources.relevance).toFixed(4)}` : '';
+  rows.push(`${ok ? 'PASS' : 'FAIL'} ${src} ${cit} ${(ms / 1000).toFixed(1)}s${rel} | ${q}\n      → ${text.replace(/\s+/g, ' ').slice(0, 220)}`);
 }
 console.log(rows.join('\n'));
 console.log(`\n${LABEL} SUMMARY`);

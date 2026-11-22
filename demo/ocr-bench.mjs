@@ -7,14 +7,21 @@
 // Hindi: scanned gazette pages have no ground truth, so we report broken
 // Devanagari sequences and whether key phrases (checked by eye) were read.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join } from 'node:path';
-import { PDFParse } from 'pdf-parse';
-import { createWorker } from 'tesseract.js';
+import { pathToFileURL } from 'node:url';
+
+// Packages come from the API (run this from api/): ESM resolves imports
+// relative to this file, so resolve them from the working directory instead.
+const fromApi = createRequire(join(process.cwd(), 'package.json'));
+const load = (name) => import(pathToFileURL(fromApi.resolve(name)).href);
+const { PDFParse } = await load('pdf-parse');
+const { createWorker } = (await load('tesseract.js')).default ?? (await load('tesseract.js'));
 
 const DOCS = process.argv[2] ?? '../docs';
 const OUT = process.argv[3] ?? '/tmp/ocr-bench';
 const OLLAMA = process.env.OLLAMA_API_ENDPOINT ?? 'http://localhost:11434';
-const MODEL = process.env.OCR_MODEL ?? 'qwen3-vl:8b';
+const MODEL = process.env.OCR_MODEL ?? 'qwen3-vl:8b-instruct';
 mkdirSync(OUT, { recursive: true });
 
 const ENGLISH = [

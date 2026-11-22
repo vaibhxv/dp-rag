@@ -7,7 +7,7 @@ import { createWorker, type Worker } from 'tesseract.js';
  * Page OCR with two engines:
  *
  * - `ollama` (OCR_ENGINE=ollama): a vision-language model served by Ollama
- *   (default `qwen3-vl:8b`) reads the rendered page on the GPU. Much better on
+ *   (default `qwen3-vl:8b-instruct`) reads the rendered page on the GPU. Much better on
  *   Devanagari, gazette mastheads and pages with stamps. It reports no
  *   confidence, so pages read this way have `confidence: null`.
  * - `tesseract` (default): tesseract.js (WASM, CPU). Needs no GPU. Also the
@@ -21,7 +21,7 @@ import { createWorker, type Worker } from 'tesseract.js';
  */
 export const OCR_LANGS = process.env.OCR_LANGS ?? 'eng+hin';
 const OCR_ENGINE = (process.env.OCR_ENGINE ?? 'tesseract').toLowerCase();
-const OCR_MODEL = process.env.OCR_MODEL ?? 'qwen3-vl:8b';
+const OCR_MODEL = process.env.OCR_MODEL ?? 'qwen3-vl:8b-instruct';
 const OLLAMA_URL =
   process.env.OLLAMA_API_ENDPOINT ??
   process.env.OLLAMA_ENDPOINT ??
