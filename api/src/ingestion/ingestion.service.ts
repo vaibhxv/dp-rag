@@ -154,6 +154,22 @@ export class IngestionService implements OnApplicationBootstrap {
     return this.get(id);
   }
 
+  /**
+   * Re-runs the whole pipeline (text/OCR -> describe -> chunk -> embed) on the
+   * stored original, keeping the document id. Use after changing the OCR
+   * engine or the embedding model.
+   */
+  reprocess(id: string): DocumentRecord {
+    this.get(id);
+    this.store.updateDocument(id, { status: 'queued', progress: 'Waiting in queue', error: '' });
+    this.enqueue(id);
+    return this.get(id);
+  }
+
+  reprocessAll(): DocumentRecord[] {
+    return this.store.listDocuments().map((d) => this.reprocess(d.id));
+  }
+
   async remove(id: string): Promise<void> {
     this.get(id);
     const i = this.queue.indexOf(id);

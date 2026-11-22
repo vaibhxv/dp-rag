@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { Response } from 'express';
 import { type ChatMessage, OllamaService } from '../ollama/ollama.service.js';
+import { RerankerService } from '../retrieval/reranker.service.js';
 import {
   type Passage,
   RetrievalService,
@@ -8,7 +9,15 @@ import {
 import type { ChatDto, UIMessageLike } from './chat.dto.js';
 
 /** 3 measured better than 5 with a 1.5B model: fewer look-alike lines to confuse. */
-const PASSAGE_LIMIT = 3;
+const PASSAGE_LIMIT = Number(process.env.CHAT_PASSAGES ?? 3);
+/** Hybrid-search candidates handed to the reranker (when one is configured). */
+const RERANK_CANDIDATES = Number(process.env.RERANK_CANDIDATES ?? 20);
+/**
+ * With a reranker, its top score (0-1) is the relevance gate instead of the
+ * embedding similarity: a cross-encoder separates "answers the question" from
+ * "same topic" far more sharply. Calibrated on the sample documents.
+ */
+const MIN_RERANK_SCORE = Number(process.env.MIN_RERANK_SCORE ?? 0.1);
 /**
  * Below this cosine similarity (best passage vs the question) the question is
  * treated as not covered and the LLM is not called. Measured on the 25 sample
@@ -61,7 +70,64 @@ export class ChatService {
   constructor(
     private readonly retrieval: RetrievalService,
     private readonly ollama: OllamaService,
+    private readonly reranker: RerankerService,
   ) {}
+
+  /**
+   * Finds the passages to answer from, plus a relevance score for the
+   * "not covered" gate. With a reranker: hybrid search for candidates, then
+   * cross-encoder reranking. Without: hybrid top-N, gated by the best
+   * embedding similarity.
+   */
+  private async findPassages(query: string, dto: ChatDto) {
+    const mode = dto.mode ?? 'hybrid';
+    if (this.reranker.enabled) {
+      const { passages: candidates } = await this.retrieval.search({
+        query,
+        mode,
+        alpha: 0.5,
+        limit: RERANK_CANDIDATES,
+        documentId: dto.documentId,
+      });
+      try {
+        const hits = await this.reranker.rerank(
+          query,
+          candidates.map((p) => `${p.title}\n${p.text}`),
+        );
+        const passages = hits
+          .slice(0, PASSAGE_LIMIT)
+          .map((h) => ({ ...candidates[h.index], score: h.score }));
+        const relevance = hits[0]?.score ?? 0;
+        return { passages, mode, relevance, covered: relevance >= MIN_RERANK_SCORE };
+      } catch (err) {
+        this.logger.warn(`Reranker unavailable, using hybrid order: ${(err as Error).message}`);
+      }
+    }
+    const [{ passages }, best] = await Promise.all([
+      this.retrieval.search({
+        query,
+        mode,
+        alpha: 0.5,
+        limit: PASSAGE_LIMIT,
+        documentId: dto.documentId,
+      }),
+      // Hybrid scores are relative, so measure absolute relevance separately.
+      this.retrieval.search({
+        query,
+        mode: 'semantic',
+        alpha: 0.5,
+        limit: 1,
+        documentId: dto.documentId,
+      }),
+    ]);
+    const relevance = best.passages[0]?.score ?? 0;
+    return {
+      passages,
+      mode,
+      relevance,
+      covered: passages.length > 0 && relevance >= MIN_RELEVANCE,
+    };
+  }
 
   async stream(dto: ChatDto, res: Response, signal: AbortSignal) {
     res.status(200);
@@ -98,25 +164,7 @@ export class ChatService {
         data: { step: 'retrieving' },
         transient: true,
       });
-      const [{ passages, mode }, best] = await Promise.all([
-        this.retrieval.search({
-          query,
-          mode: dto.mode ?? 'hybrid',
-          alpha: 0.5,
-          limit: PASSAGE_LIMIT,
-          documentId: dto.documentId,
-        }),
-        // Hybrid scores are relative, so measure absolute relevance separately.
-        this.retrieval.search({
-          query,
-          mode: 'semantic',
-          alpha: 0.5,
-          limit: 1,
-          documentId: dto.documentId,
-        }),
-      ]);
-      const relevance = best.passages[0]?.score ?? 0;
-      const covered = passages.length > 0 && relevance >= MIN_RELEVANCE;
+      const { passages, mode, relevance, covered } = await this.findPassages(query, dto);
       send({
         type: 'data-sources',
         id: 'sources',

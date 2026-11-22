@@ -116,6 +116,20 @@ export class DocumentsController {
     return this.ingestion.redescribe(id);
   }
 
+  /** Re-runs OCR, description and embedding for every document. */
+  @Post('reprocess')
+  @HttpCode(202)
+  reprocessAll() {
+    return this.ingestion.reprocessAll();
+  }
+
+  /** Re-runs OCR, description and embedding on the stored original. */
+  @Post(':id/reprocess')
+  @HttpCode(202)
+  reprocess(@Param('id', ParseUUIDPipe) id: string) {
+    return this.ingestion.reprocess(id);
+  }
+
   @Delete(':id')
   @HttpCode(204)
   async remove(@Param('id', ParseUUIDPipe) id: string) {

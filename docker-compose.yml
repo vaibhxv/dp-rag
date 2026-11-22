@@ -42,6 +42,13 @@ services:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
   # One-shot: pulls the models into the ollama volume, then exits.
   #   paraphrase-multilingual  562 MB  multilingual embeddings (Hindi + English)
@@ -58,6 +65,25 @@ services:
       - sleep 3 && ollama pull ${OLLAMA_EMBED_MODEL:-paraphrase-multilingual} && ollama pull ${OLLAMA_MODEL:-qwen2.5:1.5b}
     restart: "no"
 
+  # Reranker: re-scores the top search hits so the LLM sees the passages that
+  # actually answer the question (fixes look-alike lines, e.g. SI vs ASI rates).
+  # Tag 120-* is built for Blackwell GPUs (RTX 50xx); use cpu-1.9 on machines without one.
+  reranker:
+    image: ghcr.io/huggingface/text-embeddings-inference:120-1.9
+    command: ["--model-id", "BAAI/bge-reranker-v2-m3"]
+    ports:
+      - "8082:80"
+    volumes:
+      - reranker_data:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
 volumes:
   weaviate_data:
   ollama_data:
+  reranker_data:

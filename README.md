@@ -137,6 +137,28 @@ Open http://localhost:3000 and click **Ingest documents** in the sidebar. Ingest
 
 To use **Docker** instead, run `docker compose up -d` and set `OLLAMA_ENDPOINT=http://ollama:11434` in `api/.env` (Weaviate calls Ollama inside the Docker network). The API keeps using `OLLAMA_API_ENDPOINT=http://localhost:11434`.
 
+### GPU server (16 GB, e.g. RTX 5070 Ti)
+
+`docker-compose.yml` runs Ollama and the reranker on an NVIDIA GPU (remove the `deploy:` blocks on a machine without one). Recommended models, all on-premise:
+
+| Role | Model | Size |
+|---|---|---|
+| OCR | `qwen3-vl:8b` (vision model; tesseract.js stays as the per-page fallback) | 6.2 GB |
+| Embeddings | `qwen3-embedding:4b` | 2.5 GB |
+| Reranker | `BAAI/bge-reranker-v2-m3` via text-embeddings-inference (`reranker` service) | ~1.1 GB |
+| LLM | `gemma4:12b` | 8.0 GB |
+
+```bash
+docker compose up -d                       # weaviate, ollama, reranker
+docker compose exec ollama ollama pull qwen3-vl:8b
+docker compose exec ollama ollama pull qwen3-embedding:4b
+docker compose exec ollama ollama pull gemma4:12b
+```
+
+In `api/.env`: `OCR_ENGINE=ollama`, `OCR_MODEL=qwen3-vl:8b`, `OLLAMA_EMBED_MODEL=qwen3-embedding:4b`, `OLLAMA_MODEL=gemma4:12b`, `OLLAMA_NUM_CTX=8192`, `RERANKER_URL=http://localhost:8082`. After changing the embedding model, delete the `DocumentChunk` collection, restart the API and re-index the stored originals with `curl -X POST localhost:4000/documents/reprocess`.
+
+Measure before and after a change: `node demo/qa-eval.mjs` (26 questions with known answers, incl. Hindi, Hinglish and out-of-scope) and `cd api && node ../demo/ocr-bench.mjs ../docs` (OCR error rate against PDF text layers).
+
 Notes:
 - `OLLAMA_ENDPOINT` is the address **Weaviate** uses for embeddings. `OLLAMA_API_ENDPOINT` (defaults to `OLLAMA_ENDPOINT`) is the address the **API** uses for chat and descriptions. They differ only when Weaviate runs in Docker.
 - The `DocumentChunk` collection config (embedding model, endpoint) is fixed when it is created. To change it, delete the collection (`curl -X DELETE localhost:8080/v1/schema/DocumentChunk`) and re-ingest.

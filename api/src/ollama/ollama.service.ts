@@ -32,7 +32,13 @@ export class OllamaService {
       config.get<string>('OLLAMA_API_ENDPOINT') ??
       config.get<string>('OLLAMA_ENDPOINT', 'http://localhost:11434');
     this.model = config.get<string>('OLLAMA_MODEL', 'qwen2.5:1.5b');
+    this.think = config.get<string>('OLLAMA_THINK', 'false') === 'true';
+    // Minimum context window; raise it on a GPU server (e.g. 8192).
+    this.numCtx = Number(config.get<string>('OLLAMA_NUM_CTX', '4096'));
   }
+
+  private readonly think: boolean;
+  private readonly numCtx: number;
 
   private async post(messages: ChatMessage[], stream: boolean, o: ChatOptions) {
     const res = await fetch(`${this.endpoint}/api/chat`, {
@@ -44,8 +50,14 @@ export class OllamaService {
         messages,
         stream,
         format: o.format,
+        // Reasoning models (qwen3, gemma4, ...) otherwise "think" silently
+        // before answering: slower, and no better for short grounded answers.
+        think: this.think,
         keep_alive: '30m',
-        options: { temperature: o.temperature ?? 0, num_ctx: o.numCtx ?? 4096 },
+        options: {
+          temperature: o.temperature ?? 0,
+          num_ctx: Math.max(o.numCtx ?? 4096, this.numCtx),
+        },
       }),
     });
     if (!res.ok) {
